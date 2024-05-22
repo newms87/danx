@@ -30,7 +30,7 @@
   },
   "autoload": {
     "psr-4": {
-      "Newms87\\DanxLaravel\\": "src/"
+      "Newms87\\Danx\\": "src/"
     }
   },
   "extra": {
