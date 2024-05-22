@@ -1,4 +1,4 @@
-# Danx Laravel Package
+# Danx Package
 
 ## Installation
 
@@ -11,7 +11,7 @@ composer require danx/laravel
 ### Publish the configuration file
 
 ```bash
-sail artisan vendor:publish --provider="Newms87\DanxLaravel\DanxServiceProvider"
+sail artisan vendor:publish --provider="Newms87\Danx\DanxServiceProvider"
 ```
 
 ## Development
@@ -50,7 +50,7 @@ make VERSION=1.0.0 publish
     
     'auditlog' => [
             'driver' => 'custom',
-            'via'    => Newms87\DanxLaravel\Logging\Audit\AuditLogLogger::class,
+            'via'    => Newms87\Danx\Logging\Audit\AuditLogLogger::class,
             'level'  => env('LOG_LEVEL', 'debug'),
         ],
 ],

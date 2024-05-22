@@ -1,9 +1,9 @@
 <?php
 
-namespace Newms87\DanxLaravel\Http\Routes;
+namespace Newms87\Danx\Http\Routes;
 
 
-use Newms87\DanxLaravel\Http\Controllers\FileController;
+use Newms87\Danx\Http\Controllers\FileController;
 use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
 use Illuminate\Routing\RouteRegistrar;
 use Illuminate\Support\Facades\Route;

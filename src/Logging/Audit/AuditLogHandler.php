@@ -1,11 +1,11 @@
 <?php
 
-namespace Newms87\DanxLaravel\Logging\Audit;
+namespace Newms87\Danx\Logging\Audit;
 
 use Exception;
-use Newms87\DanxLaravel\Audit\AuditDriver;
-use Newms87\DanxLaravel\Helpers\StringHelper;
-use Newms87\DanxLaravel\Models\Audit\ErrorLog;
+use Newms87\Danx\Audit\AuditDriver;
+use Newms87\Danx\Helpers\StringHelper;
+use Newms87\Danx\Models\Audit\ErrorLog;
 use Monolog\Handler\AbstractProcessingHandler;
 use Monolog\Level;
 use Monolog\Logger;

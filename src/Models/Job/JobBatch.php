@@ -1,9 +1,9 @@
 <?php
 
-namespace Newms87\DanxLaravel\Models\Job;
+namespace Newms87\Danx\Models\Job;
 
-use Newms87\DanxLaravel\Jobs\Job;
-use Newms87\DanxLaravel\Models\Ref;
+use Newms87\Danx\Jobs\Job;
+use Newms87\Danx\Models\Ref;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Laravel\SerializableClosure\SerializableClosure;

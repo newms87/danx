@@ -1,12 +1,12 @@
 <?php
 
-namespace Newms87\DanxLaravel\Http\Controllers;
+namespace Newms87\Danx\Http\Controllers;
 
 use Exception;
-use Newms87\DanxLaravel\Exceptions\ValidationError;
-use Newms87\DanxLaravel\Models\Utilities\StoredFile;
-use Newms87\DanxLaravel\Repositories\FileRepository;
-use Newms87\DanxLaravel\Resources\StoredFileResource;
+use Newms87\Danx\Exceptions\ValidationError;
+use Newms87\Danx\Models\Utilities\StoredFile;
+use Newms87\Danx\Repositories\FileRepository;
+use Newms87\Danx\Resources\StoredFileResource;
 use Illuminate\Http\Request;
 
 class FileController extends Controller

@@ -1,6 +1,6 @@
 <?php
 
-namespace Newms87\DanxLaravel\Traits;
+namespace Newms87\Danx\Traits;
 
 use Exception;
 use Illuminate\Database\Eloquent\Model;

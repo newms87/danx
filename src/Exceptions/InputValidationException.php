@@ -1,8 +1,8 @@
 <?php
 
-namespace Newms87\DanxLaravel\Exceptions;
+namespace Newms87\Danx\Exceptions;
 
-use Newms87\DanxLaravel\Input\Input;
+use Newms87\Danx\Input\Input;
 use Illuminate\Validation\ValidationException;
 
 class InputValidationException extends ValidationException

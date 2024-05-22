@@ -1,10 +1,10 @@
 <?php
 
-namespace Newms87\DanxLaravel\Models\Job;
+namespace Newms87\Danx\Models\Job;
 
-use Newms87\DanxLaravel\Helpers\DateHelper;
-use Newms87\DanxLaravel\Models\Audit\AuditRequest;
-use Newms87\DanxLaravel\Traits\HasVirtualFields;
+use Newms87\Danx\Helpers\DateHelper;
+use Newms87\Danx\Models\Audit\AuditRequest;
+use Newms87\Danx\Traits\HasVirtualFields;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 

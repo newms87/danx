@@ -1,9 +1,9 @@
 <?php
 
-namespace Newms87\DanxLaravel\Models;
+namespace Newms87\Danx\Models;
 
 use Exception;
-use Newms87\DanxLaravel\Helpers\LockHelper;
+use Newms87\Danx\Helpers\LockHelper;
 use Illuminate\Database\Eloquent\Model;
 use Throwable;
 

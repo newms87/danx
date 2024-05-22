@@ -1,10 +1,10 @@
 <?php
 
-namespace Newms87\DanxLaravel\Models\Utilities;
+namespace Newms87\Danx\Models\Utilities;
 
-use Newms87\DanxLaravel\Helpers\FileHelper;
-use Newms87\DanxLaravel\Traits\SerializesDates;
-use Newms87\DanxLaravel\Traits\UuidModelTrait;
+use Newms87\Danx\Helpers\FileHelper;
+use Newms87\Danx\Traits\SerializesDates;
+use Newms87\Danx\Traits\UuidModelTrait;
 use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\MorphTo;

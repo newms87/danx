@@ -1,9 +1,9 @@
 <?php
 
-namespace Newms87\DanxLaravel\Helpers;
+namespace Newms87\Danx\Helpers;
 
 use Exception;
-use Newms87\DanxLaravel\Exceptions\LockException;
+use Newms87\Danx\Exceptions\LockException;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;

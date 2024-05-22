@@ -1,10 +1,10 @@
 <?php
 
-namespace Newms87\DanxLaravel\Models\Audit;
+namespace Newms87\Danx\Models\Audit;
 
-use Newms87\DanxLaravel\Models\Job\JobDispatch;
-use Newms87\DanxLaravel\Traits\HasVirtualFields;
-use Newms87\DanxLaravel\Traits\SerializesDates;
+use Newms87\Danx\Models\Job\JobDispatch;
+use Newms87\Danx\Traits\HasVirtualFields;
+use Newms87\Danx\Traits\SerializesDates;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 

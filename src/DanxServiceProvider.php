@@ -1,13 +1,13 @@
 <?php
 
-namespace Newms87\DanxLaravel;
+namespace Newms87\Danx;
 
-use Newms87\DanxLaravel\Console\Commands\DanxLinkCommand;
-use Newms87\DanxLaravel\Console\Commands\FixPermissions;
-use Newms87\DanxLaravel\Console\Commands\SyncDirtyJobsCommand;
-use Newms87\DanxLaravel\Console\Commands\VaporDecryptCommand;
-use Newms87\DanxLaravel\Console\Commands\VaporEncryptCommand;
-use Newms87\DanxLaravel\Listeners\LogCommandExecution;
+use Newms87\Danx\Console\Commands\DanxLinkCommand;
+use Newms87\Danx\Console\Commands\FixPermissions;
+use Newms87\Danx\Console\Commands\SyncDirtyJobsCommand;
+use Newms87\Danx\Console\Commands\VaporDecryptCommand;
+use Newms87\Danx\Console\Commands\VaporEncryptCommand;
+use Newms87\Danx\Listeners\LogCommandExecution;
 use Illuminate\Console\Events\CommandStarting;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;

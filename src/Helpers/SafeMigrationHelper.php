@@ -1,6 +1,6 @@
 <?php
 
-namespace Newms87\DanxLaravel\Helpers;
+namespace Newms87\Danx\Helpers;
 
 use Exception;
 use Illuminate\Support\Facades\DB;

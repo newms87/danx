@@ -1,8 +1,8 @@
 <?php
 
-namespace Newms87\DanxLaravel\Resources;
+namespace Newms87\Danx\Resources;
 
-use Newms87\DanxLaravel\Models\Utilities\StoredFile;
+use Newms87\Danx\Models\Utilities\StoredFile;
 
 /**
  * @mixin StoredFile

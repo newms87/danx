@@ -1,6 +1,6 @@
 <?php
 
-namespace Newms87\DanxLaravel\Exceptions;
+namespace Newms87\Danx\Exceptions;
 
 use Exception;
 use Throwable;

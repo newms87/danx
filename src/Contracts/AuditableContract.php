@@ -1,6 +1,6 @@
 <?php
 
-namespace Newms87\DanxLaravel\Contracts;
+namespace Newms87\Danx\Contracts;
 
 use OwenIt\Auditing\Contracts\Auditable;
 

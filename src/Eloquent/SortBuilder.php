@@ -1,6 +1,6 @@
 <?php
 
-namespace Newms87\DanxLaravel\Eloquent;
+namespace Newms87\Danx\Eloquent;
 
 use Exception;
 use Illuminate\Database\Eloquent\Builder;

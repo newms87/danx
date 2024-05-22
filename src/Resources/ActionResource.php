@@ -1,7 +1,7 @@
 <?php
 
 
-namespace Newms87\DanxLaravel\Resources;
+namespace Newms87\Danx\Resources;
 
 use Exception;
 use Illuminate\Database\Eloquent\Model;

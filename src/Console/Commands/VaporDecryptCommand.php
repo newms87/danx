@@ -1,6 +1,6 @@
 <?php
 
-namespace Newms87\DanxLaravel\Console\Commands;
+namespace Newms87\Danx\Console\Commands;
 
 use Exception;
 use Illuminate\Console\Command;

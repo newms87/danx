@@ -1,9 +1,9 @@
 <?php
 
-namespace Newms87\DanxLaravel\Console\Commands;
+namespace Newms87\Danx\Console\Commands;
 
-use Newms87\DanxLaravel\Jobs\SyncDirtyJobJob;
-use Newms87\DanxLaravel\Models\Job\SyncJob;
+use Newms87\Danx\Jobs\SyncDirtyJobJob;
+use Newms87\Danx\Models\Job\SyncJob;
 use Illuminate\Console\Command;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Log;

@@ -1,10 +1,10 @@
 <?php
 
-namespace Newms87\DanxLaravel\Models\Audit;
+namespace Newms87\Danx\Models\Audit;
 
 use Exception;
-use Newms87\DanxLaravel\Audit\AuditDriver;
-use Newms87\DanxLaravel\Helpers\StringHelper;
+use Newms87\Danx\Audit\AuditDriver;
+use Newms87\Danx\Helpers\StringHelper;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;

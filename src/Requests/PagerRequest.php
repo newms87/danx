@@ -1,6 +1,6 @@
 <?php
 
-namespace Newms87\DanxLaravel\Requests;
+namespace Newms87\Danx\Requests;
 
 use Illuminate\Http\Request;
 

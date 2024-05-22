@@ -1,11 +1,11 @@
 <?php
 
-namespace Newms87\DanxLaravel\Services;
+namespace Newms87\Danx\Services;
 
-use Newms87\DanxLaravel\Api\ConvertApi\ConvertApi;
-use Newms87\DanxLaravel\Exceptions\ApiException;
-use Newms87\DanxLaravel\Models\Utilities\StoredFile;
-use Newms87\DanxLaravel\Repositories\FileRepository;
+use Newms87\Danx\Api\ConvertApi\ConvertApi;
+use Newms87\Danx\Exceptions\ApiException;
+use Newms87\Danx\Models\Utilities\StoredFile;
+use Newms87\Danx\Repositories\FileRepository;
 
 class TranscodeFileService
 {

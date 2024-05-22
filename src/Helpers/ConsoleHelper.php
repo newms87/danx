@@ -1,8 +1,8 @@
 <?php
 
-namespace Newms87\DanxLaravel\Helpers;
+namespace Newms87\Danx\Helpers;
 
-use Newms87\DanxLaravel\Traits\ConsoleStreamable;
+use Newms87\Danx\Traits\ConsoleStreamable;
 
 class ConsoleHelper
 {

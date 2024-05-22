@@ -1,9 +1,9 @@
 <?php
 
-namespace Newms87\DanxLaravel\Repositories;
+namespace Newms87\Danx\Repositories;
 
 use Exception;
-use Newms87\DanxLaravel\Exceptions\ValidationError;
+use Newms87\Danx\Exceptions\ValidationError;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;

@@ -1,9 +1,9 @@
 <?php
 
-namespace Newms87\DanxLaravel\Input;
+namespace Newms87\Danx\Input;
 
 use Exception;
-use Newms87\DanxLaravel\Exceptions\InputValidationException;
+use Newms87\Danx\Exceptions\InputValidationException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\HigherOrderCollectionProxy;

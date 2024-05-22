@@ -1,10 +1,10 @@
 <?php
 
-namespace Newms87\DanxLaravel\Http\Routes;
+namespace Newms87\Danx\Http\Routes;
 
 
-use Newms87\DanxLaravel\Http\Controllers\ActionController;
-use Newms87\DanxLaravel\Requests\PagerRequest;
+use Newms87\Danx\Http\Controllers\ActionController;
+use Newms87\Danx\Requests\PagerRequest;
 use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
 use Illuminate\Routing\RouteRegistrar;
 use Illuminate\Support\Facades\Route;

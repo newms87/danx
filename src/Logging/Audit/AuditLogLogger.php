@@ -1,6 +1,6 @@
 <?php
 
-namespace Newms87\DanxLaravel\Logging\Audit;
+namespace Newms87\Danx\Logging\Audit;
 
 use Exception;
 use Monolog\Logger;

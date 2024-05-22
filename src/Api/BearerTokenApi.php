@@ -1,6 +1,6 @@
 <?php
 
-namespace Newms87\DanxLaravel\Api;
+namespace Newms87\Danx\Api;
 
 use Exception;
 use GuzzleHttp\Client;

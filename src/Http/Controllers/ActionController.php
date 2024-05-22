@@ -1,13 +1,13 @@
 <?php
 
-namespace Newms87\DanxLaravel\Http\Controllers;
+namespace Newms87\Danx\Http\Controllers;
 
 use Exception;
-use Newms87\DanxLaravel\Exceptions\ValidationError;
-use Newms87\DanxLaravel\Helpers\FileHelper;
-use Newms87\DanxLaravel\Models\Audit\ErrorLog;
-use Newms87\DanxLaravel\Repositories\ActionRepository;
-use Newms87\DanxLaravel\Requests\PagerRequest;
+use Newms87\Danx\Exceptions\ValidationError;
+use Newms87\Danx\Helpers\FileHelper;
+use Newms87\Danx\Models\Audit\ErrorLog;
+use Newms87\Danx\Repositories\ActionRepository;
+use Newms87\Danx\Requests\PagerRequest;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;

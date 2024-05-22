@@ -1,10 +1,10 @@
 <?php
 
-namespace Newms87\DanxLaravel\Middleware;
+namespace Newms87\Danx\Middleware;
 
 use Closure;
-use Newms87\DanxLaravel\Audit\AuditDriver;
-use Newms87\DanxLaravel\Models\Audit\ErrorLog;
+use Newms87\Danx\Audit\AuditDriver;
+use Newms87\Danx\Models\Audit\ErrorLog;
 use Illuminate\Http\Request;
 use Throwable;
 

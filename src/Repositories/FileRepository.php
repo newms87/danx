@@ -1,14 +1,14 @@
 <?php
 
-namespace Newms87\DanxLaravel\Repositories;
+namespace Newms87\Danx\Repositories;
 
 use Aws\S3\S3Client;
 use Exception;
-use Newms87\DanxLaravel\Exceptions\ValidationError;
-use Newms87\DanxLaravel\Helpers\FileHelper;
-use Newms87\DanxLaravel\Helpers\StringHelper;
-use Newms87\DanxLaravel\Models\Utilities\StoredFile;
-use Newms87\DanxLaravel\Resources\StoredFileResource;
+use Newms87\Danx\Exceptions\ValidationError;
+use Newms87\Danx\Helpers\FileHelper;
+use Newms87\Danx\Helpers\StringHelper;
+use Newms87\Danx\Models\Utilities\StoredFile;
+use Newms87\Danx\Resources\StoredFileResource;
 use getID3;
 use Illuminate\Http\File;
 use Illuminate\Http\UploadedFile;

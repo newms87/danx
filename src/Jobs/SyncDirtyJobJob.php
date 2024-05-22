@@ -1,8 +1,8 @@
 <?php
 
-namespace Newms87\DanxLaravel\Jobs;
+namespace Newms87\Danx\Jobs;
 
-use Newms87\DanxLaravel\Models\Job\SyncJob;
+use Newms87\Danx\Models\Job\SyncJob;
 
 class SyncDirtyJobJob extends Job
 {

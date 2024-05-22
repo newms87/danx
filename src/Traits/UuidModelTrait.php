@@ -1,6 +1,6 @@
 <?php
 
-namespace Newms87\DanxLaravel\Traits;
+namespace Newms87\Danx\Traits;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;

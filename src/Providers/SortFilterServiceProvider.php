@@ -1,10 +1,10 @@
 <?php
 
-namespace Newms87\DanxLaravel\Providers;
+namespace Newms87\Danx\Providers;
 
-use Newms87\DanxLaravel\Eloquent\CustomQueryBuilder;
-use Newms87\DanxLaravel\Eloquent\FilterBuilder;
-use Newms87\DanxLaravel\Eloquent\SortBuilder;
+use Newms87\Danx\Eloquent\CustomQueryBuilder;
+use Newms87\Danx\Eloquent\FilterBuilder;
+use Newms87\Danx\Eloquent\SortBuilder;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Facades\DB;

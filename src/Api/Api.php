@@ -1,13 +1,13 @@
 <?php
 
-namespace Newms87\DanxLaravel\Api;
+namespace Newms87\Danx\Api;
 
 use Exception;
-use Newms87\DanxLaravel\Exceptions\ApiException;
-use Newms87\DanxLaravel\Exceptions\ApiRequestException;
-use Newms87\DanxLaravel\Helpers\ConsoleHelper;
-use Newms87\DanxLaravel\Helpers\StringHelper;
-use Newms87\DanxLaravel\Models\Audit\ApiLog;
+use Newms87\Danx\Exceptions\ApiException;
+use Newms87\Danx\Exceptions\ApiRequestException;
+use Newms87\Danx\Helpers\ConsoleHelper;
+use Newms87\Danx\Helpers\StringHelper;
+use Newms87\Danx\Models\Audit\ApiLog;
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Exception\RequestException;

@@ -1,10 +1,10 @@
 <?php
 
-namespace Newms87\DanxLaravel\Middleware;
+namespace Newms87\Danx\Middleware;
 
 use Closure;
 use Exception;
-use Newms87\DanxLaravel\Audit\AuditDriver;
+use Newms87\Danx\Audit\AuditDriver;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redirect;

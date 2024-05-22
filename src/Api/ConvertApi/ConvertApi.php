@@ -1,10 +1,10 @@
 <?php
 
-namespace Newms87\DanxLaravel\Api\ConvertApi;
+namespace Newms87\Danx\Api\ConvertApi;
 
-use Newms87\DanxLaravel\Api\BasicAuthApi;
-use Newms87\DanxLaravel\Exceptions\ApiException;
-use Newms87\DanxLaravel\Exceptions\ApiRequestException;
+use Newms87\Danx\Api\BasicAuthApi;
+use Newms87\Danx\Exceptions\ApiException;
+use Newms87\Danx\Exceptions\ApiRequestException;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Container\ContainerExceptionInterface;
 use Psr\Container\NotFoundExceptionInterface;

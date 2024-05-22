@@ -1,9 +1,9 @@
 <?php
 
-namespace Newms87\DanxLaravel\Helpers;
+namespace Newms87\Danx\Helpers;
 
-use Newms87\DanxLaravel\Library\CsvExport;
-use Newms87\DanxLaravel\Models\Utilities\StoredFile as FileModel;
+use Newms87\Danx\Library\CsvExport;
+use Newms87\Danx\Models\Utilities\StoredFile as FileModel;
 use Illuminate\Contracts\Filesystem\FileNotFoundException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\File as FileFacade;

@@ -1,9 +1,9 @@
 <?php
 
-namespace Newms87\DanxLaravel\Exceptions;
+namespace Newms87\Danx\Exceptions;
 
-use Newms87\DanxLaravel\Api\Api;
-use Newms87\DanxLaravel\Helpers\StringHelper;
+use Newms87\Danx\Api\Api;
+use Newms87\Danx\Helpers\StringHelper;
 use GuzzleHttp\Exception\RequestException;
 use Throwable;
 

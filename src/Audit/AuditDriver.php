@@ -1,10 +1,10 @@
 <?php
 
-namespace Newms87\DanxLaravel\Audit;
+namespace Newms87\Danx\Audit;
 
 use Exception;
-use Newms87\DanxLaravel\Models\Audit\Audit;
-use Newms87\DanxLaravel\Models\Audit\AuditRequest;
+use Newms87\Danx\Models\Audit\Audit;
+use Newms87\Danx\Models\Audit\AuditRequest;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;

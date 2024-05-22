@@ -1,9 +1,9 @@
 <?php
 
-namespace Newms87\DanxLaravel\Api;
+namespace Newms87\Danx\Api;
 
 use Exception;
-use Newms87\DanxLaravel\Exceptions\ApiException;
+use Newms87\Danx\Exceptions\ApiException;
 use GuzzleHttp\Client;
 
 /**

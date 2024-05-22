@@ -1,6 +1,6 @@
 <?php
 
-namespace Newms87\DanxLaravel\Helpers;
+namespace Newms87\Danx\Helpers;
 
 use Illuminate\Support\Facades\Log;
 

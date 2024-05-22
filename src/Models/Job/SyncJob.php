@@ -1,10 +1,10 @@
 <?php
 
-namespace Newms87\DanxLaravel\Models\Job;
+namespace Newms87\Danx\Models\Job;
 
 use Closure;
 use Exception;
-use Newms87\DanxLaravel\Helpers\LockHelper;
+use Newms87\Danx\Helpers\LockHelper;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Facades\Log;

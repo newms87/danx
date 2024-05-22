@@ -1,6 +1,6 @@
 <?php
 
-namespace Newms87\DanxLaravel\Traits;
+namespace Newms87\Danx\Traits;
 
 use Illuminate\Console\OutputStyle;
 use Illuminate\Contracts\Support\Arrayable;

@@ -1,6 +1,6 @@
 <?php
 
-namespace Newms87\DanxLaravel\Logging\Console;
+namespace Newms87\Danx\Logging\Console;
 
 use Monolog\Formatter\NormalizerFormatter;
 use Monolog\Logger;

@@ -1,6 +1,6 @@
 <?php
 
-namespace Newms87\DanxLaravel\Library;
+namespace Newms87\Danx\Library;
 
 class CsvExport
 {

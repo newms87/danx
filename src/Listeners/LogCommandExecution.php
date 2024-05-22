@@ -1,8 +1,8 @@
 <?php
 
-namespace Newms87\DanxLaravel\Listeners;
+namespace Newms87\Danx\Listeners;
 
-use Newms87\DanxLaravel\Audit\AuditDriver;
+use Newms87\Danx\Audit\AuditDriver;
 
 class LogCommandExecution
 {

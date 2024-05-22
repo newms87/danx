@@ -1,14 +1,14 @@
 <?php
 
-namespace Newms87\DanxLaravel\Jobs;
+namespace Newms87\Danx\Jobs;
 
 use Carbon\Carbon;
 use Exception;
-use Newms87\DanxLaravel\Audit\AuditDriver;
-use Newms87\DanxLaravel\Helpers\DateHelper;
-use Newms87\DanxLaravel\Helpers\FileHelper;
-use Newms87\DanxLaravel\Helpers\LockHelper;
-use Newms87\DanxLaravel\Models\Job\JobDispatch;
+use Newms87\Danx\Audit\AuditDriver;
+use Newms87\Danx\Helpers\DateHelper;
+use Newms87\Danx\Helpers\FileHelper;
+use Newms87\Danx\Helpers\LockHelper;
+use Newms87\Danx\Models\Job\JobDispatch;
 use Illuminate\Bus\Batchable;
 use Illuminate\Bus\Dispatcher;
 use Illuminate\Bus\Queueable;

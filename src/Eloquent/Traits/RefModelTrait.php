@@ -1,8 +1,8 @@
 <?php
 
-namespace Newms87\DanxLaravel\Eloquent\Traits;
+namespace Newms87\Danx\Eloquent\Traits;
 
-use Newms87\DanxLaravel\Models\Ref;
+use Newms87\Danx\Models\Ref;
 use Illuminate\Database\Eloquent\Model;
 use Throwable;
 

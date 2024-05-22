@@ -1,6 +1,6 @@
 <?php
 
-namespace Newms87\DanxLaravel\Models\Audit;
+namespace Newms87\Danx\Models\Audit;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
