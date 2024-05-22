@@ -12,6 +12,12 @@ class FixPermissions extends Command
 
 	public function handle()
 	{
+		if (config('app.env') !== 'local') {
+			$this->info('Permissions only need to be fixed in local development environments.');
+
+			return;
+		}
+
 		$commands = [
 			'chmod -R 777 storage',
 			'chmod -R 777 bootstrap/cache',
@@ -21,6 +27,7 @@ class FixPermissions extends Command
 			'chmod -R 777 public',
 			'chmod -R 777 routes',
 			'chmod -R 777 resources',
+			'chmod -R 777 vendor',
 			'chmod 777 .',
 			'chmod 777 composer.json',
 		];
