@@ -12,9 +12,10 @@ class DanxLinkCommand extends Command
 
 	public function handle()
 	{
+		$this->call('fix');
 		$path = base_path('vendor/newms87');
 
-		(new Process(['rm', './danx'], $path))->mustRun();
+		(new Process(['rm', '-R', './danx'], $path))->mustRun();
 		(new Process(['ln', '-s', '../../../danx', './danx'], $path))->mustRun();
 		$process = (new Process(['ls', '-lah'], $path))->mustRun();
 		$this->info($process->getOutput());
