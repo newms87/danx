@@ -8,7 +8,20 @@ class CsvExport
 
 	public function __construct(array $records = [])
 	{
-		$this->records = $records;
+		$this->records = $this->cleanRecords($records);
+	}
+
+	public function cleanRecords($records)
+	{
+		return array_map(function ($record) {
+			return array_map(function ($value) {
+				if (is_array($value)) {
+					return json_encode($value);
+				}
+
+				return is_string($value) ? trim($value) : $value;
+			}, $record);
+		}, $records);
 	}
 
 	public function headings(): array

@@ -3,10 +3,10 @@
 namespace Newms87\Danx\Repositories;
 
 use Exception;
-use Newms87\Danx\Exceptions\ValidationError;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
+use Newms87\Danx\Exceptions\ValidationError;
 
 abstract class ActionRepository
 {
@@ -128,10 +128,10 @@ abstract class ActionRepository
 	}
 
 	/**
-	 * @param array $filter
+	 * @param array|null $filter
 	 * @return array
 	 */
-	public function export(array $filter = [])
+	public function export(?array $filter = [])
 	{
 		return $this->query()
 			->filter($filter)

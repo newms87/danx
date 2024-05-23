@@ -33,11 +33,6 @@
       "Newms87\\Danx\\": "src/"
     }
   },
-  "scripts": {
-    "post-autoload-dump": [
-      "@php artisan fix"
-    ]
-  },
   "extra": {
     "laravel": {
       "providers": [

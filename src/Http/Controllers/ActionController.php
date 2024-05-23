@@ -3,16 +3,16 @@
 namespace Newms87\Danx\Http\Controllers;
 
 use Exception;
-use Newms87\Danx\Exceptions\ValidationError;
-use Newms87\Danx\Helpers\FileHelper;
-use Newms87\Danx\Models\Audit\ErrorLog;
-use Newms87\Danx\Repositories\ActionRepository;
-use Newms87\Danx\Requests\PagerRequest;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\Response;
+use Newms87\Danx\Exceptions\ValidationError;
+use Newms87\Danx\Helpers\FileHelper;
+use Newms87\Danx\Models\Audit\ErrorLog;
+use Newms87\Danx\Repositories\ActionRepository;
+use Newms87\Danx\Requests\PagerRequest;
 use Throwable;
 
 abstract class ActionController extends Controller
@@ -203,8 +203,8 @@ abstract class ActionController extends Controller
 
 	public function export(PagerRequest $request)
 	{
-		$export = $this->repo()->export($request->filter());
+		$export = $this->repo()->export($request->filter() ?? []);
 
-		return FileHelper::exportCsv($export);
+		return FileHelper::exportCsv($export ?? []);
 	}
 }
