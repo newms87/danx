@@ -79,7 +79,7 @@ abstract class ActionController extends Controller
 
 	/**
 	 * @param PagerRequest $request
-	 * @return AnonymousResourceCollection
+	 * @return array
 	 * @throws Exception
 	 */
 	public function list(PagerRequest $request)
@@ -89,7 +89,14 @@ abstract class ActionController extends Controller
 			->sort($request->sort())
 			->paginate($request->perPage(50));
 
-		return $this->collection($results->items());
+		return [
+			'data' => $this->collection($results->items())->toArray($request->request),
+			'meta' => [
+				'total'        => $results->total(),
+				'current_page' => $results->currentPage(),
+				'per_page'     => $results->perPage(),
+			],
+		];
 	}
 
 	/**

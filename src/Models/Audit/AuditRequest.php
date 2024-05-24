@@ -2,11 +2,11 @@
 
 namespace Newms87\Danx\Models\Audit;
 
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Newms87\Danx\Models\Job\JobDispatch;
 use Newms87\Danx\Traits\HasVirtualFields;
 use Newms87\Danx\Traits\SerializesDates;
-use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class AuditRequest extends Model
 {
@@ -74,7 +74,7 @@ class AuditRequest extends Model
 
 	public function scopeRequestMethod($query, $method)
 	{
-		return $query->where('request->method', $method);
+		return $query->whereIn('request->method', (array)$method);
 	}
 
 	/**
