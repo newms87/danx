@@ -8,11 +8,13 @@ publish:
 	fi
 	git tag -a $(VERSION) -m "Release $(VERSION)"
 	git push origin $(VERSION)
+	git push
 
 # Retrieves latest version from git tags, patches the version, and commits and pushes the change
 patch:
 	VERSION=$$(git tag | grep -Px '^[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -n 1 | awk -F. '{print $$1"."$$2"."($$3+1)}') ; \
 	git tag -a "$$VERSION" -m "Release $$VERSION" ; \
 	git push origin "$$VERSION"
+	git push
 
 
