@@ -242,12 +242,16 @@ class StringHelper
 	 * @throws Exception
 	 */
 	public static function limitText(
-		$limit,
-		$prefix,
-		$suffix = '',
-		$minPrefixLength = 0
+		int     $limit,
+		?string $prefix,
+		?string $suffix = '',
+		int     $minPrefixLength = 0
 	)
 	{
+		if (!$prefix && !$suffix) {
+			return '';
+		}
+		
 		if ($minPrefixLength > $limit) {
 			throw new Exception('minPrefixLength cannot be greater than limit');
 		}

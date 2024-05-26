@@ -2,11 +2,11 @@
 
 namespace Newms87\Danx\Models\Job;
 
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Newms87\Danx\Helpers\DateHelper;
 use Newms87\Danx\Models\Audit\AuditRequest;
 use Newms87\Danx\Traits\HasVirtualFields;
-use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class JobDispatch extends Model
 {
@@ -29,6 +29,7 @@ class JobDispatch extends Model
 		'ran_at',
 		'completed_at',
 		'timeout_at',
+		'data',
 		'running_audit_request_id',
 		'dispatch_audit_request_id',
 	];
@@ -39,6 +40,7 @@ class JobDispatch extends Model
 		'ran_at'       => 'datetime',
 		'completed_at' => 'datetime',
 		'timeout_at'   => 'datetime',
+		'data'         => 'json',
 	];
 
 	protected $virtual = [

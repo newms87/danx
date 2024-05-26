@@ -2,11 +2,11 @@
 
 namespace Newms87\Danx\Helpers;
 
-use Newms87\Danx\Library\CsvExport;
-use Newms87\Danx\Models\Utilities\StoredFile as FileModel;
 use Illuminate\Contracts\Filesystem\FileNotFoundException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\File as FileFacade;
+use Newms87\Danx\Library\CsvExport;
+use Newms87\Danx\Models\Utilities\StoredFile as FileModel;
 use Symfony\Component\Mime\MimeTypes;
 use Symfony\Component\Yaml\Parser as YamlParser;
 use ZipArchive;
@@ -402,5 +402,28 @@ class FileHelper
 		$mimes     = MimeTypes::getDefault()->getMimeTypes($extension);
 
 		return $mimes[0] ?? 'application/octet-stream';
+	}
+
+	/**
+	 * Resolve an array of class names inside a directory in the App directory / namespace
+	 *
+	 * @param $dir
+	 * @return array
+	 */
+	public static function getClassNamesInAppDir($dir = '')
+	{
+		$files = FileFacade::allFiles(app_path($dir));
+
+		$namespace = 'App\\' . ($dir ? str_replace('/', '\\', $dir) . '\\' : '');
+
+		$classes = [];
+
+		foreach($files as $file) {
+			$relativePath = str_replace('/', '\\', $file->getRelativePath());
+
+			$classes[] = $namespace . ($relativePath ? $relativePath . '\\' : '') . $file->getFilenameWithoutExtension();
+		}
+
+		return $classes;
 	}
 }
