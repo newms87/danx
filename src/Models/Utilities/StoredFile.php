@@ -2,15 +2,16 @@
 
 namespace Newms87\Danx\Models\Utilities;
 
-use Newms87\Danx\Helpers\FileHelper;
-use Newms87\Danx\Traits\SerializesDates;
-use Newms87\Danx\Traits\UuidModelTrait;
 use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Facades\Storage;
+use Newms87\Danx\Helpers\FileHelper;
+use Newms87\Danx\Traits\SerializesDates;
+use Newms87\Danx\Traits\UuidModelTrait;
 use OwenIt\Auditing\Auditable;
 use OwenIt\Auditing\Contracts\Auditable as AuditableContract;
 
@@ -151,7 +152,10 @@ class StoredFile extends Model implements AuditableContract
 		return $this->morphTo();
 	}
 
-	public function transcodes()
+	/**
+	 * @return HasMany
+	 */
+	public function transcodes(): HasMany|StoredFile
 	{
 		return $this->hasMany(StoredFile::class, 'original_stored_file_id');
 	}
