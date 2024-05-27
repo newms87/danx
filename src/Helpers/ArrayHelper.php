@@ -49,11 +49,19 @@ class ArrayHelper
 		return array_diff_assoc($array1, $array2);
 	}
 
-	public static function groupByDot($array, $key)
+	/**
+	 * Group an array by a dot notation key
+	 *
+	 * @param              $array
+	 * @param string|array $key Either dot notation key or an array of keys. ie: ['key1', 'key2', 'key3'] or
+	 *                          'key1.key2.key3'
+	 * @return array
+	 */
+	public static function groupByDot($array, $key): array
 	{
 		// If the array is not an array just return
 		if (!is_array($array)) {
-			return null;
+			return [];
 		}
 
 		$keys     = is_array($key) ? $key : explode('.', $key);
@@ -69,6 +77,8 @@ class ArrayHelper
 				$result[] = $item;
 			} elseif (array_key_exists($firstKey, $item)) {
 				$result[$item[$firstKey]] = $item;
+			} else {
+				$result[] = $item;
 			}
 		}
 
