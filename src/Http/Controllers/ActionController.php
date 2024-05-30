@@ -174,7 +174,7 @@ abstract class ActionController extends Controller
 					'trace' => $throwable->getTrace(),
 				];
 			}
-			ErrorLog::logException('ERROR', $throwable);
+			ErrorLog::logException(ErrorLog::ERROR, $throwable);
 
 			return response($response, 400);
 		}

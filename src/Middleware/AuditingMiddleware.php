@@ -3,9 +3,9 @@
 namespace Newms87\Danx\Middleware;
 
 use Closure;
+use Illuminate\Http\Request;
 use Newms87\Danx\Audit\AuditDriver;
 use Newms87\Danx\Models\Audit\ErrorLog;
-use Illuminate\Http\Request;
 use Throwable;
 
 class AuditingMiddleware
@@ -21,7 +21,7 @@ class AuditingMiddleware
 		try {
 			$response = $next($request);
 		} catch(Throwable $throwable) {
-			ErrorLog::logException('ERROR', $throwable);
+			ErrorLog::logException(ErrorLog::ERROR, $throwable);
 			$response = response([
 				'error'   => true,
 				'message' => 'An error occurred. Please try again later.',

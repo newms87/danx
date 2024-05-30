@@ -3,12 +3,12 @@
 namespace Newms87\Danx\Logging\Audit;
 
 use Exception;
-use Newms87\Danx\Audit\AuditDriver;
-use Newms87\Danx\Helpers\StringHelper;
-use Newms87\Danx\Models\Audit\ErrorLog;
 use Monolog\Handler\AbstractProcessingHandler;
 use Monolog\Level;
 use Monolog\Logger;
+use Newms87\Danx\Audit\AuditDriver;
+use Newms87\Danx\Helpers\StringHelper;
+use Newms87\Danx\Models\Audit\ErrorLog;
 
 /**
  * Writes entries to error_logs table
@@ -52,9 +52,11 @@ class AuditLogHandler extends AbstractProcessingHandler
 				$auditRequest->save();
 			}
 
+			$levelInt = ErrorLog::getLevelInt($level);
+
 			if ($exception) {
-				ErrorLog::logException($level, $exception);
-			} elseif (Logger::toMonologLevel($level) >= Level::Error) {
+				ErrorLog::logException($levelInt, $exception);
+			} elseif ($levelInt >= Level::Error) {
 				ErrorLog::logErrorMessage($level, $message);
 			}
 		}

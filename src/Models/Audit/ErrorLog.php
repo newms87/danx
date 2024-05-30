@@ -4,18 +4,18 @@ namespace Newms87\Danx\Models\Audit;
 
 use Error;
 use Exception;
-use Newms87\Danx\Audit\AuditDriver;
-use Newms87\Danx\Helpers\StringHelper;
-use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\Log;
+use Newms87\Danx\Audit\AuditDriver;
+use Newms87\Danx\Helpers\StringHelper;
 use Throwable;
 
 class ErrorLog extends Model
 {
-	const DEBUG = 100,
+	const int
+		DEBUG = 100,
 		INFO = 200,
 		NOTICE = 250,
 		WARNING = 300,
@@ -24,10 +24,10 @@ class ErrorLog extends Model
 		ALERT = 550,
 		EMERGENCY = 600;
 
-	const MAX_MESSAGE_SIZE = 512;
+	const int MAX_MESSAGE_SIZE = 512;
 
 	// Cap these messages to 10 MB
-	const MAX_FULL_MESSAGE_SIZE = 1024 * 1024 * 10;
+	const int MAX_FULL_MESSAGE_SIZE = 1024 * 1024 * 10;
 
 	protected $table = 'error_logs';
 
@@ -43,16 +43,16 @@ class ErrorLog extends Model
 	];
 
 	/**
-	 * @param                           $level
+	 * @param int                       $level
 	 * @param Throwable|Exception|Error $exception
 	 * @param array                     $data
 	 * @param ErrorLog|null             $parent
-	 * @return ErrorLog|Model|object
+	 * @return ErrorLog|null
 	 */
-	public static function logException($level, Throwable|Exception|Error $exception, array $data = [], ErrorLog $parent = null)
+	public static function logException(int $level, Throwable|Exception|Error $exception, array $data = [], ErrorLog $parent = null): ?ErrorLog
 	{
-		// Ignore logging Warnings or lower
-		if (isset($exception::$level) && $exception::$level <= 300 || $level === 'WARNING') {
+		// Ignore logging INFO or lower
+		if ($level <= ErrorLog::INFO) {
 			return null;
 		}
 
@@ -118,6 +118,24 @@ class ErrorLog extends Model
 	}
 
 	/**
+	 * Convert a level name to an integer
+	 */
+	public static function getLevelInt(string $levelName): int
+	{
+		return match ($levelName) {
+			'DEBUG' => self::DEBUG,
+			'INFO' => self::INFO,
+			'NOTICE' => self::NOTICE,
+			'WARNING' => self::WARNING,
+			'ERROR' => self::ERROR,
+			'CRITICAL' => self::CRITICAL,
+			'ALERT' => self::ALERT,
+			'EMERGENCY' => self::EMERGENCY,
+			default => 0,
+		};
+	}
+
+	/**
 	 * @param Exception|Error $exception
 	 * @return array
 	 */
@@ -138,16 +156,16 @@ class ErrorLog extends Model
 	}
 
 	/**
-	 * @param       $level
-	 * @param       $message
-	 * @param int   $code
-	 * @param array $data
-	 * @return ErrorLog|Model
+	 * @param int    $level
+	 * @param string $message
+	 * @param int    $code
+	 * @param array  $data
+	 * @return ErrorLog|null
 	 */
-	public static function logErrorMessage($level, $message, int $code = 0, array $data = [])
+	public static function logErrorMessage(int $level, string $message, int $code = 0, array $data = []): ?ErrorLog
 	{
-		// Ignore logging Warnings
-		if ($level === 'WARNING') {
+		// Ignore logging anything below ERROR level
+		if ($level < ErrorLog::ERROR) {
 			return null;
 		}
 
@@ -166,9 +184,9 @@ class ErrorLog extends Model
 	 * @param ErrorLog $errorLog
 	 * @param string   $message
 	 * @param array    $data
-	 * @return ErrorLog|Builder|Model|object
+	 * @return ErrorLog|null
 	 */
-	public static function log(ErrorLog $errorLog, string $message, array $data = [])
+	public static function log(ErrorLog $errorLog, string $message, array $data = []): ?ErrorLog
 	{
 		$errorLog->hash = $errorLog->generateHash();
 
@@ -220,9 +238,6 @@ class ErrorLog extends Model
 		]);
 	}
 
-	/**
-	 * @return string
-	 */
 	public function generateHash(): string
 	{
 		if ($this->stack_trace) {
@@ -234,54 +249,44 @@ class ErrorLog extends Model
 		return md5(base64_encode("$this->error_class:::$this->level:::$this->code:::$this->file:::$this->line:::$id"));
 	}
 
-	/**
-	 * @return HasMany|ErrorLogEntry[]
-	 */
-	public function entries()
+	public function entries(): HasMany|ErrorLogEntry
 	{
 		return $this->hasMany(ErrorLogEntry::class);
 	}
 
 	/**
-	 * @return BelongsTo|ErrorLog
+	 * The parent error of this error
 	 */
-	public function parent()
+	public function parent(): BelongsTo|ErrorLog
 	{
 		return $this->belongsTo(ErrorLog::class, 'parent_id');
 	}
 
 	/**
-	 * @return HasMany|ErrorLog[]
+	 * All the children of this error
 	 */
-	public function children()
+	public function children(): HasMany|ErrorLog
 	{
 		return $this->hasMany(ErrorLog::class, 'parent_id');
 	}
 
 	/**
 	 * A flat list of all children
-	 *
-	 * @return HasMany|ErrorLog[]
 	 */
-	public function chain()
+	public function chain(): HasMany|ErrorLog
 	{
 		return $this->hasMany(ErrorLog::class, 'root_id');
 	}
 
 	/**
 	 * The root Error entry in the chain
-	 *
-	 * @return BelongsTo
 	 */
-	public function root()
+	public function root(): BelongsTo|ErrorLog
 	{
 		return $this->belongsTo(ErrorLog::class, 'root_id');
 	}
 
-	/**
-	 * @return string
-	 */
-	public function __toString()
+	public function __toString(): string
 	{
 		return "ErrorLog ($this->id): $this->level $this->code $this->error_class";
 	}
