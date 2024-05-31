@@ -2,17 +2,22 @@
 
 namespace Newms87\Danx\Api\ConvertApi;
 
+use GuzzleHttp\Exception\GuzzleException;
 use Newms87\Danx\Api\BasicAuthApi;
 use Newms87\Danx\Exceptions\ApiException;
 use Newms87\Danx\Exceptions\ApiRequestException;
-use GuzzleHttp\Exception\GuzzleException;
 use Psr\Container\ContainerExceptionInterface;
 use Psr\Container\NotFoundExceptionInterface;
 
 class ConvertApi extends BasicAuthApi
 {
-	const int THROTTLE_ATTEMPTS      = 1000;
-	const int THROTTLE_DECAY_SECONDS = 3600;
+	protected array $rateLimits = [
+		[
+			'limit'          => 1000,
+			'interval'       => 3600,
+			'waitPerAttempt' => 1,
+		],
+	];
 
 	public static string $serviceName = 'convert-api';
 

@@ -3,11 +3,6 @@
 namespace Newms87\Danx\Api;
 
 use Exception;
-use Newms87\Danx\Exceptions\ApiException;
-use Newms87\Danx\Exceptions\ApiRequestException;
-use Newms87\Danx\Helpers\ConsoleHelper;
-use Newms87\Danx\Helpers\StringHelper;
-use Newms87\Danx\Models\Audit\ApiLog;
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Exception\RequestException;
@@ -15,6 +10,11 @@ use GuzzleHttp\HandlerStack;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
+use Newms87\Danx\Exceptions\ApiException;
+use Newms87\Danx\Exceptions\ApiRequestException;
+use Newms87\Danx\Helpers\ConsoleHelper;
+use Newms87\Danx\Helpers\StringHelper;
+use Newms87\Danx\Models\Audit\ApiLog;
 use Psr\Container\ContainerExceptionInterface;
 use Psr\Container\NotFoundExceptionInterface;
 use Psr\Http\Message\RequestInterface;
@@ -25,11 +25,12 @@ use Psr\Http\Message\ResponseInterface;
  */
 abstract class Api
 {
-	/** @var false Define the attempts per time period this API should be limited to.
-	 *             (eg: THROTTLE_ATTEMPTS = 5, THROTTLE_DECAY_SECONDS = 1 --- equals 5 requests per second)
-	 */
-	const bool|int THROTTLE_ATTEMPTS      = false;
-	const int      THROTTLE_DECAY_SECONDS = 1;
+	// Limits the request rates to the API. Define as many rate limits as needed to satisfy requirements of endpoint
+	// Leave empty for no rate limiting.
+	// Set waitPerAttempt as false to throw an exception immediately if rate limit is exceeded
+	protected array $rateLimits = [
+		// ['limit' => 5, 'interval' => 1, 'waitPerAttempt' => .5], // 5 requests per second, wait 1/2 second between attempts
+	];
 
 	const string
 		METHOD_DELETE = 'DELETE',
@@ -164,23 +165,33 @@ abstract class Api
 	}
 
 	/**
-	 * Throttle requests (if THROTTLE_ATTEMPTS is set) to avoid hitting rate limits
-	 * NOTE: uses defined consts THROTTLE_ATTEMPTS and THROTTLE_DECAY_SECONDS
+	 * Throttle requests (if $rateLimits is set) to avoid hitting rate limits
 	 *
 	 * @throws Exception
 	 */
 	public function throttle()
 	{
-		if (static::THROTTLE_ATTEMPTS) {
-			$waitPerAttempt = static::THROTTLE_DECAY_SECONDS * 1000 / static::THROTTLE_ATTEMPTS;
+		if ($this->rateLimits) {
+			$serviceName = $this->getServiceName();
 
-			$key = $this->getServiceName();
+			foreach($this->rateLimits as $rateLimit) {
+				$limit          = $rateLimit['limit'] ?? null;
+				$interval       = $rateLimit['interval'] ?? null;
+				$waitPerAttempt = $rateLimit['waitPerAttempt'] ?? null;
 
-			// As soon as the rate timer is up, we can take our turn
-			while(RateLimiter::remaining($key . '-limiter', static::THROTTLE_ATTEMPTS) <= 0) {
-				usleep($waitPerAttempt * 1000);
+				if ($limit && $interval) {
+					$key = $serviceName . '-' . $limit . '-' . $interval . '-limiter';
+
+					// As soon as the rate timer is up, we can take our turn
+					while(RateLimiter::remaining($key, $limit) <= 0) {
+						if (!$waitPerAttempt) {
+							throw new ApiException("Rate limit exceeded for $serviceName: $limit requests per $interval second(s)");
+						}
+						usleep($waitPerAttempt * 1000 * 1000);
+					}
+					RateLimiter::hit($key, $interval);
+				}
 			}
-			RateLimiter::hit($key . '-limiter', static::THROTTLE_DECAY_SECONDS);
 		}
 	}
 
