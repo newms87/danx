@@ -439,6 +439,24 @@ abstract class Api
 	}
 
 	/**
+	 * @param string $url
+	 * @param array  $queryParams
+	 * @return array
+	 */
+	public function mergeQueryParamsFromUrl(string $url, array $queryParams = []): array
+	{
+		$uri = parse_url($url);
+
+		if (isset($uri['query'])) {
+			parse_str($uri['query'], $urlQueryParams);
+
+			$queryParams = array_merge($urlQueryParams, $queryParams);
+		}
+
+		return $queryParams;
+	}
+
+	/**
 	 * Make a request to the endpoint
 	 *
 	 * @throws ApiException
@@ -479,6 +497,8 @@ abstract class Api
 			}
 
 			$url = (!empty($this->prefixUri) ? rtrim($this->prefixUri, '/') . '/' : '') . $endpoint;
+
+			$queryParams = $this->mergeQueryParamsFromUrl($url, $queryParams);
 
 			$this->response = $client->request(
 				$type,
