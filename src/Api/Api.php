@@ -164,6 +164,14 @@ abstract class Api
 		return $this;
 	}
 
+	public function getRequestHeaders()
+	{
+		return [
+			'Content-Type' => 'application/json',
+			'Accept'       => 'application/json',
+		];
+	}
+
 	/**
 	 * Throttle requests (if $rateLimits is set) to avoid hitting rate limits
 	 *
@@ -206,10 +214,7 @@ abstract class Api
 		if (!$this->client) {
 			$options['handler'] = $this->createHandler();
 
-			$options['headers'] = ($options['headers'] ?? []) + [
-					'Content-Type' => 'application/json',
-					'Accept'       => 'application/json',
-				];
+			$options['headers'] = ($options['headers'] ?? []) + $this->getRequestHeaders();
 
 			$options['base_uri'] = $this->baseApiUrl ?: $this->getBaseApiUrl();
 

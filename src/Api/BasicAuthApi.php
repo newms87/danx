@@ -4,7 +4,6 @@ namespace Newms87\Danx\Api;
 
 use Exception;
 use Newms87\Danx\Exceptions\ApiException;
-use GuzzleHttp\Client;
 
 /**
  * A generic implementation of an API authenticated via BasicAuth
@@ -17,24 +16,9 @@ abstract class BasicAuthApi extends Api
 	protected ?string $clientSecret = null;
 
 	/**
-	 * @param array $options
-	 * @return Client
-	 *
-	 * @throws Exception
-	 */
-	public function client($options = [])
-	{
-		// Merge the Basic Auth Headers with any existing headers on the options
-		$options['headers'] = ($options['headers'] ?? []) + $this->getBasicAuthHeaders();
-
-		return parent::client($options);
-	}
-
-	/**
-	 * @return string|null
 	 * @throws ApiException
 	 */
-	public function resolveToken()
+	public function resolveToken(): ?string
 	{
 		if ($this->clientId && $this->clientSecret) {
 			return base64_encode($this->clientId . ':' . $this->clientSecret);
@@ -50,15 +34,12 @@ abstract class BasicAuthApi extends Api
 	/**
 	 * Returns the Basic Auth headers w/ client ID and client Secret
 	 *
-	 * @return string[]
 	 * @throws Exception
 	 */
-	public function getBasicAuthHeaders()
+	public function getRequestHeaders(): array
 	{
-		$token = $this->resolveToken();
-
 		return [
-			'Authorization' => "Basic $token",
-		];
+				'Authorization' => "Basic " . $this->resolveToken(),
+			] + parent::getRequestHeaders();
 	}
 }

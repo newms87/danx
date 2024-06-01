@@ -25,11 +25,7 @@ class ConvertApi extends BasicAuthApi
 	{
 		$this->clientId     = config('convertapi.api_key');
 		$this->clientSecret = config('convertapi.secret_key');
-	}
-
-	public function getBaseApiUrl(): string
-	{
-		return config('convertapi.url');
+		$this->baseApiUrl   = config('convertapi.url');
 	}
 
 	/**
