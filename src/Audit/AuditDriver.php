@@ -3,12 +3,12 @@
 namespace Newms87\Danx\Audit;
 
 use Exception;
-use Newms87\Danx\Models\Audit\Audit;
-use Newms87\Danx\Models\Audit\AuditRequest;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use Newms87\Danx\Models\Audit\Audit;
+use Newms87\Danx\Models\Audit\AuditRequest;
 use OwenIt\Auditing\Contracts\Audit as AuditContract;
 use OwenIt\Auditing\Contracts\Auditable;
 use OwenIt\Auditing\Contracts\AuditDriver as AuditDriverContract;
@@ -81,10 +81,16 @@ class AuditDriver implements AuditDriverContract
 		// object if it has not already been created
 		$auditRequest = self::getAuditRequestOrIgnore();
 
-		$auditRequest?->update([
-			'time'     => microtime(true) - self::$startTime,
-			'response' => $response ? self::getResponse($response) : null,
-		]);
+		if ($auditRequest) {
+			$auditRequest?->update([
+				'time'     => microtime(true) - self::$startTime,
+				'response' => $response ? self::getResponse($response) : null,
+			]);
+		}
+		
+		if ($response instanceof Response) {
+			$response->header('X-Audit-Request-Id', $auditRequest?->id);
+		}
 
 		return $response;
 	}

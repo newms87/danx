@@ -15,8 +15,6 @@ use Newms87\Danx\Exceptions\ApiRequestException;
 use Newms87\Danx\Helpers\ConsoleHelper;
 use Newms87\Danx\Helpers\StringHelper;
 use Newms87\Danx\Models\Audit\ApiLog;
-use Psr\Container\ContainerExceptionInterface;
-use Psr\Container\NotFoundExceptionInterface;
 use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
 
@@ -244,7 +242,7 @@ abstract class Api
 					try {
 						$this->currentApiLog = ApiLog::logRequest(
 							static::class,
-							app(static::class)->getServiceName(),
+							$this->getServiceName(),
 							$request,
 							$response
 						);
@@ -441,20 +439,26 @@ abstract class Api
 	}
 
 	/**
-	 * @param string $type
-	 * @param string $endpoint
-	 * @param string $body
-	 * @param array  $options
-	 * @return static
+	 * Make a request to the endpoint
 	 *
+	 * @throws ApiException
 	 * @throws ApiRequestException
-	 * @throws ContainerExceptionInterface
 	 * @throws GuzzleException
-	 * @throws NotFoundExceptionInterface
 	 * @throws Exception
 	 */
-	public function call($type, $endpoint, $body = '', $options = [])
+	public function call(string $type, string $endpoint, $body = '', array $options = []): static
 	{
+		if (!is_string($body)) {
+			$jsonBody = StringHelper::safeJsonEncode($body);
+
+			if ($body && !$jsonBody) {
+				throw new ApiException("Failed to encode body to JSON\n\n" . serialize($body));
+			}
+
+			$body = $jsonBody;
+		}
+
+
 		$this->throttle();
 
 		$this->response = null;
@@ -497,74 +501,63 @@ abstract class Api
 	}
 
 	/**
-	 * @param        $endpoint
-	 * @param array  $query
-	 * @param string $data
-	 * @param array  $options
-	 * @return static
+	 * Make a GET request
 	 *
+	 * @throws ApiException
 	 * @throws ApiRequestException
-	 * @throws ContainerExceptionInterface
 	 * @throws GuzzleException
-	 * @throws NotFoundExceptionInterface
 	 */
-	public function get($endpoint, $query = [], $data = '', $options = [])
+	public function get(string $endpoint, array $query = [], string|array $data = [], array $options = []): static
 	{
-		return $this->queryParams($query)->call(self::METHOD_GET, $endpoint, $data ? json_encode($data) : '', $options);
+		return $this->queryParams($query)->call(self::METHOD_GET, $endpoint, $data, $options);
 	}
 
 	/**
-	 * @param       $endpoint
-	 * @param array $data
-	 * @param array $options
-	 * @return static
+	 * Make a POST request
 	 *
+	 * @throws ApiException
 	 * @throws ApiRequestException
-	 * @throws ContainerExceptionInterface
 	 * @throws GuzzleException
-	 * @throws NotFoundExceptionInterface|ApiException
 	 */
-	public function post($endpoint, $data = [], $options = [])
+	public function post(string $endpoint, string|array $data = [], $options = []): static
 	{
-		$jsonBody = StringHelper::safeJsonEncode($data);
-
-		if ($data && !$jsonBody) {
-			throw new ApiException("Failed to encode data to JSON\n\n" . serialize($data));
-		}
-
-		return $this->call(self::METHOD_POST, $endpoint, $jsonBody, $options);
+		return $this->call(self::METHOD_POST, $endpoint, $data, $options);
 	}
 
 	/**
-	 * @param       $endpoint
-	 * @param array $data
-	 * @param array $options
-	 * @return $this
+	 * Make a PUT request
 	 *
+	 * @throws ApiException
 	 * @throws ApiRequestException
-	 * @throws ContainerExceptionInterface
 	 * @throws GuzzleException
-	 * @throws NotFoundExceptionInterface
 	 */
-	public function put($endpoint, $data = [], $options = [])
+	public function put(string $endpoint, string|array $data = [], array $options = []): static
 	{
-		return $this->call(self::METHOD_PUT, $endpoint, json_encode($data), $options);
+		return $this->call(self::METHOD_PUT, $endpoint, $data, $options);
 	}
 
 	/**
-	 * @param       $endpoint
-	 * @param array $data
-	 * @param array $options
-	 * @return $this
+	 * Make a PATCH request
 	 *
+	 * @throws ApiException
 	 * @throws ApiRequestException
-	 * @throws ContainerExceptionInterface
 	 * @throws GuzzleException
-	 * @throws NotFoundExceptionInterface
 	 */
-	public function patch($endpoint, $data = [], $options = [])
+	public function patch(string $endpoint, string|array $data = [], array $options = []): static
 	{
-		return $this->call(self::METHOD_PATCH, $endpoint, json_encode($data), $options);
+		return $this->call(self::METHOD_PATCH, $endpoint, $data, $options);
+	}
+
+	/**
+	 * Make a DELETE request
+	 *
+	 * @throws ApiException
+	 * @throws ApiRequestException
+	 * @throws GuzzleException
+	 */
+	public function delete(string $endpoint, string|array $data = [], array $options = []): static
+	{
+		return $this->call(self::METHOD_DELETE, $endpoint, $data, $options);
 	}
 
 	/**
