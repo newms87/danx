@@ -33,7 +33,7 @@ trait CountableTrait
 			$relatedModelFK = $relatedModel->getForeignKey();
 			$relatedModelId = $model->$relatedModelFK;
 			$count          = $model->query()->where($relatedModelFK, $relatedModelId)->count();
-			$relatedModel->query()->find($relatedModelId)->forceFill([$counterField => $count])->save();
+			$relatedModel->query()->find($relatedModelId)?->forceFill([$counterField => $count])->save();
 		}
 	}
 }
