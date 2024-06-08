@@ -89,13 +89,15 @@ class ErrorLog extends Model
 			self::logException($level, $previous, [], $errorLog);
 		}
 
-		Log::error(
-			$errorLog->level . " " . basename($errorLog) . " ($errorLog->code)\n\n" .
-			"$errorLog->message\n\n" .
-			"$errorLog->file:$errorLog->line" .
-			(config('danx.logging.output_exception_traces') ? "\n\n" . $exception->getTraceAsString() . "\n" : '')
-		);
-
+		if ($errorLog) {
+			Log::error(
+				$errorLog->level . " " . basename($errorLog) . " ($errorLog->code)\n\n" .
+				"$errorLog->message\n\n" .
+				"$errorLog->file:$errorLog->line" .
+				(config('danx.logging.output_exception_traces') ? "\n\n" . $exception->getTraceAsString() . "\n" : '')
+			);
+		}
+		
 		return $errorLog;
 	}
 
@@ -192,27 +194,20 @@ class ErrorLog extends Model
 
 		try {
 			$existingErrorLog = ErrorLog::where('hash', $errorLog->hash)->first();
-		} catch(Exception $exception) {
-			// Fail silently - this is likely due to the error_logs table missing, so don't attempt to continue
-			Log::channel('slack-custom')->error('Error reading from error log: ' . $exception->getMessage());
 
-			return null;
-		}
+			if ($existingErrorLog) {
+				$errorLog = $existingErrorLog;
+				$errorLog->count++;
+			} else {
+				$errorLog->count = 1;
+			}
 
-		if ($existingErrorLog) {
-			$errorLog = $existingErrorLog;
-			$errorLog->count++;
-		} else {
-			$errorLog->count = 1;
-		}
+			$errorLog->last_seen_at = now();
 
-		$errorLog->last_seen_at = now();
-
-		try {
 			$errorLog->save();
 		} catch(Exception $exception) {
-			// Fail silently - this is likely due to the error_logs table missing, so don't attempt to continue
-			Log::channel('slack-custom')->error('Error saving to error log table: ' . $exception->getMessage());
+			// This is likely due to the error_logs table missing, so don't attempt to continue
+			Log::error('Error saving to error log table: ' . $exception->getMessage());
 
 			return null;
 		}
