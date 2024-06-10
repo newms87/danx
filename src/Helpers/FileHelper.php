@@ -358,36 +358,36 @@ class FileHelper
 	}
 
 	/**
+	 * Check the file size (ie: Content-Length headers) for a remote URL file
+	 */
+	public static function getRemoteFileSize($url): bool|int
+	{
+		$headers = get_headers($url, 1);
+
+		if (isset($headers['Content-Length'])) {
+			return (int)$headers['Content-Length'];
+		}
+
+		return false;
+	}
+
+	/**
 	 * @param $url
 	 * @return bool
 	 */
 	public static function isPdf($url)
 	{
-		// Initialize cURL
-		$ch = curl_init($url);
-
-		// Set options: we want a HEAD request
-		curl_setopt($ch, CURLOPT_NOBODY, true);
-		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-		curl_setopt($ch, CURLOPT_HEADER, true);
-		curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-
-		// Execute the request
-		$data = curl_exec($ch);
-
-		// Check if the request was successful
-		if ($data !== false) {
-			// Get the Content-Type of the URL
-			$contentType = curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
-
-			// Check if the Content-Type is 'application/pdf'
-			if (strpos($contentType, 'application/pdf') !== false) {
-				return true;
-			}
+		// If the URL ends in .pdf, we can assume it's a PDF
+		if (preg_match('/\.pdf$/i', $url)) {
+			return true;
 		}
 
-		// Close the cURL resource
-		curl_close($ch);
+		$headers = get_headers($url, 1);
+
+		// Check if the Content-Type is 'application/pdf'
+		if (isset($headers['Content-Type'])) {
+			return str_contains($headers['Content-Type'], 'application/pdf');
+		}
 
 		return false;
 	}
