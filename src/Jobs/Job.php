@@ -4,11 +4,6 @@ namespace Newms87\Danx\Jobs;
 
 use Carbon\Carbon;
 use Exception;
-use Newms87\Danx\Audit\AuditDriver;
-use Newms87\Danx\Helpers\DateHelper;
-use Newms87\Danx\Helpers\FileHelper;
-use Newms87\Danx\Helpers\LockHelper;
-use Newms87\Danx\Models\Job\JobDispatch;
 use Illuminate\Bus\Batchable;
 use Illuminate\Bus\Dispatcher;
 use Illuminate\Bus\Queueable;
@@ -18,6 +13,11 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
+use Newms87\Danx\Audit\AuditDriver;
+use Newms87\Danx\Helpers\DateHelper;
+use Newms87\Danx\Helpers\FileHelper;
+use Newms87\Danx\Helpers\LockHelper;
+use Newms87\Danx\Models\Job\JobDispatch;
 use ReflectionClass;
 use Throwable;
 
@@ -78,23 +78,23 @@ abstract class Job implements ShouldQueue
 			return;
 		}
 
-		$jobDispatch = JobDispatch::firstOrCreate([
+		$jobDispatch = JobDispatch::firstOrNew([
 			'ref'    => $ref,
 			'status' => JobDispatch::STATUS_PENDING,
-		], [
-			'user_id'    => user()?->id ?: null,
-			'name'       => $name,
-			'count'      => 1,
-			'timeout_at' => $this->getTimeoutAt(),
 		]);
 
 		if ($jobDispatch->isTimedOut()) {
 			$jobDispatch->update(['status' => JobDispatch::STATUS_TIMEOUT]);
 
-			$jobDispatch = JobDispatch::create([
+			$jobDispatch = JobDispatch::make([
+				'ref'    => $ref,
+				'status' => JobDispatch::STATUS_PENDING,
+			]);
+		}
+
+		if (!$jobDispatch->exists) {
+			$jobDispatch->forceFill([
 				'user_id'    => user()?->id ?: null,
-				'ref'        => $ref,
-				'status'     => JobDispatch::STATUS_PENDING,
 				'name'       => $name,
 				'count'      => 1,
 				'timeout_at' => $this->getTimeoutAt(),
@@ -188,12 +188,15 @@ abstract class Job implements ShouldQueue
 		// Reset the audit request as we want to treat each job as a new request
 		AuditDriver::$auditRequest = null;
 		AuditDriver::startTimer();
+		// Let other parts of the system know we're running inside a Job
+		self::$isRunning = true;
 
 		// Load the jobDispatch record immediately, so we can associate the same audit request entry for subsequent jobs
 		foreach($values as $value) {
 			if ($value instanceof ModelIdentifier) {
 				if ($value->class === JobDispatch::class) {
 					$this->jobDispatch         = JobDispatch::find($value->id);
+					self::$runningJob          = $this->jobDispatch;
 					AuditDriver::$auditRequest = $this->jobDispatch->runningAuditRequest ?? AuditDriver::getAuditRequest();
 
 					// Associate the Job dispatch to the running audit request
@@ -253,10 +256,10 @@ abstract class Job implements ShouldQueue
 			);
 		}
 
-		// Let other parts of the system know we're running inside a Job
-		self::$isRunning = true;
+		AuditDriver::$auditRequest?->update(['request' => $values]);
 
 		$user = $this->jobDispatch?->user()->first();
+
 		// Spoof this Job to run as the authenticated user who dispatched the job
 		if ($user) {
 			Auth::guard()->setUser($user);

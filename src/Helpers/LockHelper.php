@@ -39,10 +39,11 @@ class LockHelper
 
 			// If we did not get the lock on the first attempt, block until we get the lock
 			if (!$firstLock) {
-				Log::debug("##### LOCK WAIT: $key");
+				Log::debug("🟡🔒 WAIT: $key");
 				$lock->block($waitTime);
-				Log::debug("##### LOCK ACQUIRED: $key");
 			}
+
+			Log::debug("🔴🔒 ACQUIRED: $key");
 
 			// Always refresh the model, so we can guarantee we have the latest data after acquiring the lock
 			$model?->refresh();
@@ -70,6 +71,7 @@ class LockHelper
 	{
 		$key = self::resolveKey($key);
 		Cache::lock($key)->forceRelease();
+		Log::debug("🟢🔒 RELEASED: $key");
 	}
 
 	/**

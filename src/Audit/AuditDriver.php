@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use Newms87\Danx\Jobs\Job;
 use Newms87\Danx\Models\Audit\Audit;
 use Newms87\Danx\Models\Audit\AuditRequest;
 use OwenIt\Auditing\Contracts\Audit as AuditContract;
@@ -87,7 +88,7 @@ class AuditDriver implements AuditDriverContract
 				'response' => $response ? self::getResponse($response) : null,
 			]);
 		}
-		
+
 		if ($response instanceof Response) {
 			$response->header('X-Audit-Request-Id', $auditRequest?->id);
 		}
@@ -225,11 +226,13 @@ class AuditDriver implements AuditDriverContract
 
 		if (!self::$auditRequest) {
 			try {
+				$url = Job::$runningJob?->ref ?: substr($url ?: self::url(), 0, 512);
+
 				self::$auditRequest = AuditRequest::create([
 					'session_id'  => self::getSessionUuid(),
 					'user_id'     => user()?->id,
 					'environment' => app()->environment(),
-					'url'         => substr($url ?: self::url(), 0, 512),
+					'url'         => $url,
 					'request'     => self::getRequest(),
 					'time'        => 0,
 				]);
