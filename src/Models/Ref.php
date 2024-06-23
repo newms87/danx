@@ -3,8 +3,8 @@
 namespace Newms87\Danx\Models;
 
 use Exception;
-use Newms87\Danx\Helpers\LockHelper;
 use Illuminate\Database\Eloquent\Model;
+use Newms87\Danx\Helpers\LockHelper;
 use Throwable;
 
 class Ref extends Model
@@ -59,7 +59,10 @@ class Ref extends Model
 	 */
 	protected static function getNextRefNumber($prefix, $minChars): string
 	{
-		$maxRef = self::where('prefix', $prefix)->max('ref');
+		$maxRef = self::where('prefix', $prefix)
+			->whereRaw('id = (SELECT MAX(id) FROM refs WHERE prefix = ?)', $prefix)
+			->select('ref')
+			->first()?->ref ?: 0;
 		$number = (int)str_replace($prefix, '', $maxRef) + 1;
 
 		if (strlen((string)$number) < $minChars) {

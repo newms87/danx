@@ -387,9 +387,7 @@ abstract class Job implements ShouldQueue
 	}
 
 	/**
-	 * @param $callback
-	 *
-	 * @throws Exception
+	 * Execute the Job and update the job status accordingly
 	 */
 	public function executeJob()
 	{
@@ -429,7 +427,7 @@ abstract class Job implements ShouldQueue
 				'status'       => JobDispatch::STATUS_COMPLETE,
 				'completed_at' => now(),
 			]);
-		} catch(Exception $exception) {
+		} catch(Throwable $exception) {
 			if (config('queue.debug')) {
 				Log::debug("Exception caught for $this->jobDispatch: " . $exception->getMessage());
 			}
