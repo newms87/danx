@@ -3,11 +3,13 @@
 namespace Newms87\Danx\Services;
 
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\Log;
 use Intervention\Image\ImageManager;
 use Newms87\Danx\Api\ConvertApi\ConvertApi;
 use Newms87\Danx\Exceptions\ApiException;
 use Newms87\Danx\Models\Utilities\StoredFile;
 use Newms87\Danx\Repositories\FileRepository;
+use Throwable;
 
 class TranscodeFileService
 {
@@ -17,7 +19,7 @@ class TranscodeFileService
 
 	public function storeTranscodedFile(StoredFile $storedFile, $transcodeName, $filename, $data)
 	{
-		$dir                                     = $storedFile->id . ':' . $storedFile->filename;
+		$dir                                     = $storedFile->id;
 		$filepath                                = "transcodes/$transcodeName/$dir/$filename";
 		$transcodedFile                          = app(FileRepository::class)->createFileWithContents($filepath, $data);
 		$transcodedFile->original_stored_file_id = $storedFile->id;
@@ -29,11 +31,15 @@ class TranscodeFileService
 
 	public function pdfToImages(StoredFile $storedFile)
 	{
+		Log::debug("$storedFile creating images from PDF");
+
 		$transcodeName = self::TRANSCODE_PDF_TO_IMAGES;
 
 		$transcodes = $storedFile->transcodes()->where('transcode_name', $transcodeName)->get();
 
 		if ($transcodes->isNotEmpty()) {
+			Log::debug("Already has $transcodeName transcodes");
+
 			return $transcodes;
 		}
 
@@ -57,34 +63,58 @@ class TranscodeFileService
 	 * @param int        $padding    The vertical padding to include on each chunk (ie: the top of the image will
 	 *                               include extra rows of pixels overlapping with the previous chunk amount so content
 	 *                               such as text is still readable in each chunk)
-	 * @return Collection
 	 */
-	public function imageToVerticalChunks(StoredFile $storedFile, int $maxHeight = 1024, int $padding = 10): Collection
+	public function imageToVerticalChunks(StoredFile $storedFile, int $maxHeight = 1024, int $padding = 50): Collection
 	{
+		Log::debug("$storedFile creating vertical chunks: height = $maxHeight px, padding = $padding px");
+
 		$transcodeName = self::TRANSCODE_IMAGE_TO_VERTICAL_CHUNKS;
 
 		$transcodes = $storedFile->transcodes()->where('transcode_name', $transcodeName)->get();
 
 		if ($transcodes->isNotEmpty()) {
+			Log::debug("Already has $transcodeName transcodes");
+
 			return $transcodes;
 		}
 
-		$manager  = ImageManager::imagick();
-		$contents = file_get_contents($storedFile->url);
-		$image    = $manager->read($contents);
+		try {
+			$contents = file_get_contents($storedFile->url);
 
-		$imageWidth  = $image->width();
-		$imageHeight = $image->height();
+			if (!$contents) {
+				throw new ApiException("Could not read file contents from $storedFile->url");
+			}
 
-		$filename = pathinfo($storedFile->filename, PATHINFO_FILENAME);
+			// First try to use Imagick to read the image, if that fails use GD
+			try {
+				$manager = ImageManager::imagick();
+				$image   = $manager->read($contents);
+			} catch(Throwable $throwable) {
+				Log::warning("Imagick Error reading image $storedFile->url:\n" . $throwable->getMessage());
 
-		// Loop through the image and create chunks
-		for($y = 0; $y < $imageHeight; $y += $maxHeight) {
-			$data = $manager->read($contents)
-				->crop($imageWidth, min($maxHeight, $imageHeight - $y), 0, max(0, $y - $padding))
-				->toJpeg()
-				->toString();
-			$transcodes->push($this->storeTranscodedFile($storedFile, $transcodeName, $filename . '__' . $y . '.jpg', $data));
+				try {
+					$manager = ImageManager::gd();
+					$image   = $manager->read($contents);
+				} catch(Throwable $throwable) {
+					Log::error("GD Error reading image $storedFile->url:\n" . $throwable->getMessage());
+					throw $throwable;
+				}
+			}
+
+			$imageWidth  = $image->width();
+			$imageHeight = $image->height();
+
+			// Loop through the image and create chunks
+			for($y = 0; $y < $imageHeight; $y += $maxHeight) {
+				$data = $manager->read($contents)
+					->crop($imageWidth, min($maxHeight, $imageHeight - $y), 0, max(0, $y - $padding))
+					->toJpeg()
+					->toString();
+				$transcodes->push($this->storeTranscodedFile($storedFile, $transcodeName, $y . '.jpg', $data));
+			}
+		} catch(Throwable $throwable) {
+			Log::error("Error vertical chunking $storedFile->url:\n" . $throwable->getMessage());
+			throw $throwable;
 		}
 
 		return $transcodes;

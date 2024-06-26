@@ -5,10 +5,12 @@ namespace Newms87\Danx\Helpers;
 use Illuminate\Contracts\Filesystem\FileNotFoundException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\File as FileFacade;
+use Illuminate\Support\Str;
 use Newms87\Danx\Library\CsvExport;
 use Newms87\Danx\Models\Utilities\StoredFile as FileModel;
 use Symfony\Component\Mime\MimeTypes;
 use Symfony\Component\Yaml\Parser as YamlParser;
+use Throwable;
 use ZipArchive;
 
 class FileHelper
@@ -362,7 +364,7 @@ class FileHelper
 	 */
 	public static function getRemoteFileSize($url): bool|int
 	{
-		$headers = get_headers($url, 1);
+		$headers = FileHelper::fastGetHeaders($url);
 
 		if (isset($headers['Content-Length'])) {
 			return (int)$headers['Content-Length'];
@@ -372,17 +374,49 @@ class FileHelper
 	}
 
 	/**
-	 * @param $url
-	 * @return bool
+	 * Get the headers for a remote URL file while timing out after a certain number of seconds
 	 */
-	public static function isPdf($url)
+	public static function fastGetHeaders($url, $timeout = 3): array
+	{
+		$ch = curl_init($url);
+		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+		curl_setopt($ch, CURLOPT_HEADER, true);
+		curl_setopt($ch, CURLOPT_NOBODY, true);
+		curl_setopt($ch, CURLOPT_TIMEOUT, $timeout);
+		$headers = curl_exec($ch);
+		curl_close($ch);
+
+		if (!$headers) {
+			return [];
+		}
+
+		$headerList = [];
+		foreach(explode("\n", $headers) as $header) {
+			if (strpos($header, ':') === false) {
+				continue;
+			}
+			[$key, $value] = explode(':', $header, 2);
+			$headerList[Str::title($key)] = trim($value);
+		}
+
+		return $headerList;
+	}
+
+	/**
+	 * Checks if a URL is a PDF file by either file extensions or Content-Type headers
+	 */
+	public static function isPdf(string $url): bool
 	{
 		// If the URL ends in .pdf, we can assume it's a PDF
 		if (preg_match('/\.pdf$/i', $url)) {
 			return true;
 		}
 
-		$headers = get_headers($url, 1);
+		try {
+			$headers = FileHelper::fastGetHeaders($url, 1);
+		} catch(Throwable $throwable) {
+			return false;
+		}
 
 		// Check if the Content-Type is 'application/pdf'
 		if (isset($headers['Content-Type'])) {

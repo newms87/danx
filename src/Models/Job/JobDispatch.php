@@ -43,37 +43,26 @@ class JobDispatch extends Model
 		'data'         => 'json',
 	];
 
-	protected $virtual = [
+	protected array $virtual = [
 		'run_time' => [
 			'ran_at',
 			'completed_at',
 		],
 	];
 
-	/**
-	 * @return BelongsTo
-	 */
 	public function user(): BelongsTo
 	{
 		return $this->belongsTo(config('auth.providers.users.model'));
 	}
 
-	/**
-	 * @param $ref
-	 * @return JobDispatch|null
-	 */
-	public static function pendingJob($ref)
+	public static function pendingJob(string $ref): JobDispatch|null
 	{
 		return self::where('ref', $ref)
 			->where('status', self::STATUS_PENDING)
 			->first();
 	}
 
-	/**
-	 * @param $ref
-	 * @return JobDispatch|null
-	 */
-	public static function runningJob($ref)
+	public static function runningJob(string $ref): JobDispatch|null
 	{
 		return self::where('ref', $ref)
 			->where('status', self::STATUS_RUNNING)
@@ -82,58 +71,42 @@ class JobDispatch extends Model
 
 	/**
 	 * Checks if the job has past its defined time out period
-	 *
-	 * @return bool
 	 */
-	public function isTimedOut()
+	public function isTimedOut(): bool
 	{
 		if ($this->timeout_at) {
 			return $this->timeout_at->isPast();
-		} else {
-			return $this->created_at->addSeconds(90)->isPast();
 		}
+
+		return $this->created_at?->addSeconds(90)->isPast() ?? false;
 	}
 
-	/**
-	 * @return BelongsTo|JobBatch
-	 */
-	public function jobBatch()
+	public function jobBatch(): BelongsTo|JobBatch
 	{
 		return $this->belongsTo(JobBatch::class, 'job_batch_id');
 	}
 
-	/**
-	 * @return BelongsTo|AuditRequest
-	 */
-	public function runningAuditRequest()
+	public function runningAuditRequest(): BelongsTo|AuditRequest
 	{
 		return $this->belongsTo(AuditRequest::class, 'running_audit_request_id');
 	}
 
-	/**
-	 * @return BelongsTo|AuditRequest
-	 */
-	public function dispatchAuditRequest()
+	public function dispatchAuditRequest(): BelongsTo|AuditRequest
 	{
 		return $this->belongsTo(AuditRequest::class, 'dispatch_audit_request_id');
 	}
 
-	/**
-	 * @param $ref
-	 * @return void
-	 */
-	public static function incrementCount($ref)
+	public static function incrementCount(string $ref): void
 	{
 		JobDispatch::where('ref', $ref)
 			->where('status', JobDispatch::STATUS_PENDING)
 			->increment('count');
 	}
 
-	/**
-	 * @return string
-	 */
-	public function __toString()
+	public function __toString(): string
 	{
-		return "Job $this->id ($this->ref) [Status: $this->status, Count: $this->count, Tag: $this->job_tag, Created: " . DateHelper::formatDateTime($this->created_at) . ']';
+		$createdAt = DateHelper::formatDateTime($this->created_at);
+
+		return "<JobDispatch $this->id ($this->ref) status='$this->status' count='$this->count' tag='$this->job_tag' created='$createdAt'>";
 	}
 }

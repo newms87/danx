@@ -17,7 +17,7 @@ return [
 		 */
 		'api'     => [
 			'enabled'         => env('AUDIT_API_ENABLED', false),
-			'max_body_length' => env('AUDIT_API_MAX_BODY_LENGTH', 1000),
+			'max_body_length' => env('AUDIT_API_MAX_BODY_LENGTH', 100000),
 		],
 
 		/**

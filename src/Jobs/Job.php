@@ -98,7 +98,7 @@ abstract class Job implements ShouldQueue
 				'name'       => $name,
 				'count'      => 1,
 				'timeout_at' => $this->getTimeoutAt(),
-			]);
+			])->save();
 		}
 
 		if (config('danx.audit.enabled')) {
@@ -131,18 +131,14 @@ abstract class Job implements ShouldQueue
 	 * job is still Pending, it will be considered a duplicate and will not be executed. However, if a job is
 	 * dispatched while a duplicate job is Running, we will allow it to run as it is possible changes have been made
 	 * since the job started running.
-	 *
-	 * @return static
-	 *
-	 * @throws Exception
 	 */
-	public function dispatch($now = false)
+	public function dispatch($now = false): static
 	{
 		// Don't do anything if Job dispatching is disabled
 		if (!$this->jobDispatch) {
 			Log::debug("Job Dispatch is disabled for " . static::class);
 
-			return null;
+			return $this;
 		}
 
 		// If the Job was recently created, then it is the first time it has been dispatched
@@ -156,8 +152,6 @@ abstract class Job implements ShouldQueue
 				$this->jobDispatch->update(['timeout_at' => $this->getTimeoutAt()]);
 				app(Dispatcher::class)->dispatch($this->job ?: $this);
 			}
-
-			return $this;
 		} else {
 			// Increment the counter to indicate the number of debounced jobs
 			$this->jobDispatch->update(['count' => $this->jobDispatch->count + 1]);
@@ -165,9 +159,9 @@ abstract class Job implements ShouldQueue
 			if (config('queue.debug')) {
 				Log::debug("Pending Job {$this->jobDispatch->id} still waiting [count: {$this->jobDispatch->count}]");
 			}
-
-			return null;
 		}
+
+		return $this;
 	}
 
 	/**

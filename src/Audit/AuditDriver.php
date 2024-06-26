@@ -32,7 +32,7 @@ class AuditDriver implements AuditDriverContract
 
 	public static ?AuditRequest $auditRequest = null;
 
-	public static int $startTime = 0;
+	public static float $startTime = 0;
 
 	public static function startTimer(): void
 	{

@@ -326,6 +326,6 @@ class StoredFile extends Model implements AuditableContract
 	 */
 	public function __toString()
 	{
-		return "File ($this->id) $this->filename [$this->mime, $this->human_size]";
+		return "<StoredFile ($this->id) $this->filename mime='$this->mime' size='$this->human_size'>";
 	}
 }
