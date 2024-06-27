@@ -29,6 +29,24 @@ abstract class ActionResource extends JsonResource
 		$this->resolvedData = $this->data();
 	}
 
+	public static function make(...$parameters)
+	{
+		if (!$parameters || empty($parameters[0])) {
+			return null;
+		}
+
+		return parent::make(...$parameters);
+	}
+
+	public static function collection($resource)
+	{
+		if (!$resource || empty($resource[0])) {
+			return static::newCollection([]);
+		}
+
+		return parent::collection($resource);
+	}
+
 	public function toArray($request)
 	{
 		return $this->resolvedData + [
