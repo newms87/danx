@@ -5,7 +5,6 @@ namespace Newms87\Danx\Http\Controllers;
 use Exception;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\Response;
 use Newms87\Danx\Exceptions\ValidationError;
@@ -13,6 +12,7 @@ use Newms87\Danx\Helpers\FileHelper;
 use Newms87\Danx\Models\Audit\ErrorLog;
 use Newms87\Danx\Repositories\ActionRepository;
 use Newms87\Danx\Requests\PagerRequest;
+use Newms87\Danx\Resources\ActionResource;
 use Throwable;
 
 abstract class ActionController extends Controller
@@ -20,17 +20,16 @@ abstract class ActionController extends Controller
 	/** @var string|ActionRepository Set to the model's repository */
 	public static string $repo;
 
-	/** @var string|JsonResponse Set to the resource class for the model */
+	/** @var string|ActionResource Set to the resource class for the model */
 	public static ?string $resource;
-
-	/** @var string|JsonResponse|null Set to the details resource class for the model */
-	public static ?string $detailsResource = null;
 
 	public function __construct()
 	{
 		if (!static::$repo) {
 			throw new Exception('Please set the static $repo property in the ' . static::class . ' class');
 		}
+
+		// TODO: Remove Controller and replace routes with the repo directly
 	}
 
 	public function repo(): ActionRepository
@@ -39,36 +38,23 @@ abstract class ActionController extends Controller
 	}
 
 	/**
-	 * @param Model $instance
-	 * @return JsonResponse|mixed
+	 * A single formatted model
 	 */
-	protected function item($instance)
+	protected function item(Model|Collection|array|null $instance, array $includedFields = []): ?ActionResource
 	{
 		if (static::$resource) {
+			static::$resource::$includedFields = $includedFields;
+
 			return static::$resource::make($instance);
 		}
 
-		return $instance;
+		return null;
 	}
 
 	/**
-	 * @param Model $instance
-	 * @return JsonResponse|mixed
+	 * A list of formatted models
 	 */
-	protected function itemDetails($instance)
-	{
-		if (static::$detailsResource) {
-			return static::$detailsResource::make($instance)->toArray(request());
-		}
-
-		return $instance;
-	}
-
-	/**
-	 * @param Model[]|Collection $instances
-	 * @return AnonymousResourceCollection|array|Collection
-	 */
-	protected function collection($instances)
+	protected function collection(array|Collection|null $instances): AnonymousResourceCollection|array|Collection
 	{
 		if (static::$resource) {
 			return static::$resource::collection($instances);
@@ -101,28 +87,22 @@ abstract class ActionController extends Controller
 
 	/**
 	 * Retrieve a summary of the filtered list of items. Totals, counts, etc.
-	 *
-	 * @param PagerRequest $request
-	 * @return array
 	 */
-	public function summary(PagerRequest $request)
+	public function summary(PagerRequest $request): array|object
 	{
 		return $this->repo()->summary($request->filter());
 	}
 
 	/**
 	 * Return the item details for a detail view / filling out defaults in an editable form / etc.
-	 *
-	 * @param $model
-	 * @return JsonResponse|Response
 	 */
-	public function details($model)
+	public function details($model): mixed
 	{
 		if (!$model) {
 			return response('Item not found', 404);
 		}
 
-		return $this->itemDetails($model);
+		return $this->item($model, ['*'])?->toArray(request());
 	}
 
 	/**

@@ -5,6 +5,7 @@ namespace Newms87\Danx\Repositories;
 use Exception;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Facades\DB;
 use Newms87\Danx\Exceptions\ValidationError;
 
@@ -14,8 +15,6 @@ abstract class ActionRepository
 
 	/**
 	 * Returns an empty model instance
-	 * @return Model
-	 * @throws Exception
 	 */
 	public function model(): Model
 	{
@@ -28,16 +27,15 @@ abstract class ActionRepository
 
 	/**
 	 * Returns an instantiated model matching the ID
-	 *
-	 * @param $id
-	 * @return Model|null
-	 * @throws Exception
 	 */
 	public function instance($id): ?Model
 	{
 		return $this->model()->find($id);
 	}
 
+	/**
+	 * construct a query for the model the repo is connected to
+	 */
 	public function query(): Builder
 	{
 		return $this->model()->query();
@@ -47,8 +45,6 @@ abstract class ActionRepository
 	 * The query that will return the list of items based on the applied filter
 	 * NOTE: you should use $this->query()->with(['relationship']) method to eager load relationships for better
 	 * performance
-	 *
-	 * @return Builder
 	 */
 	public function listQuery(): Builder
 	{
@@ -56,25 +52,26 @@ abstract class ActionRepository
 	}
 
 	/**
-	 * Returns a summary of the item list based on the applied filter
-	 *
-	 * @param array $filter
-	 * @return array|object
+	 * Returns a query for the summary of the item list based on the applied filter
 	 */
-	public function summary(array $filter = []): array|object
+	public function summaryQuery(array $filter = []): Builder|QueryBuilder
 	{
 		return $this->query()->select([
 			DB::raw('COUNT(*) as count'),
 		])
-			->filter($filter)
-			->first() ?? [];
+			->filter($filter);
+	}
+
+	/**
+	 * Returns a summary of the item list based on the applied filter
+	 */
+	public function summary(array $filter = []): array|object
+	{
+		return $this->summaryQuery($filter)->first() ?? [];
 	}
 
 	/**
 	 * The dynamic and / or static list of options for the filterable fields for the model table
-	 *
-	 * @param array|null $filter
-	 * @return array
 	 */
 	public function fieldOptions(?array $filter = []): array
 	{
@@ -84,13 +81,11 @@ abstract class ActionRepository
 	/**
 	 * Applies the action to the model
 	 *
-	 * @param string     $action The name of the action to perform
-	 * @param Model|null $model  The model instance to apply the action to
-	 * @param array      $data   The data to apply to the model
-	 * @return mixed|bool|null
-	 * @throws ValidationError
+	 * @param string           $action The name of the action to perform
+	 * @param null|Model|array $model  The model instance to apply the action to
+	 * @param array|null       $data   The data to apply to the model
 	 */
-	public function applyAction(string $action, $model = null, ?array $data = null)
+	public function applyAction(string $action, Model|null|array $model = null, ?array $data = null)
 	{
 		// Handle the action
 		return match ($action) {
@@ -102,12 +97,9 @@ abstract class ActionRepository
 	}
 
 	/**
-	 * @param $filter
-	 * @param $action
-	 * @param $data
-	 * @return array
+	 * Perform an action on a list of items defined by the filter
 	 */
-	public function batchAction($filter, $action, $data = [])
+	public function batchAction($filter, $action, $data = []): array
 	{
 		$items = $this->query()->filter($filter)->get();
 
@@ -128,10 +120,9 @@ abstract class ActionRepository
 	}
 
 	/**
-	 * @param array|null $filter
-	 * @return array
+	 * Export the list of items based on the applied filter
 	 */
-	public function export(?array $filter = [])
+	public function export(?array $filter = []): array
 	{
 		return $this->query()
 			->filter($filter)
