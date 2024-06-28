@@ -4,17 +4,17 @@ namespace Newms87\Danx\Repositories;
 
 use Aws\S3\S3Client;
 use Exception;
-use Newms87\Danx\Exceptions\ValidationError;
-use Newms87\Danx\Helpers\FileHelper;
-use Newms87\Danx\Helpers\StringHelper;
-use Newms87\Danx\Models\Utilities\StoredFile;
-use Newms87\Danx\Resources\StoredFileResource;
 use getID3;
 use Illuminate\Http\File;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
-use Illuminate\Validation\ValidationException;
+use Newms87\Danx\Exceptions\ValidationError;
+use Newms87\Danx\Helpers\FileHelper;
+use Newms87\Danx\Helpers\StringHelper;
+use Newms87\Danx\Models\Utilities\StoredFile;
+use Newms87\Danx\Resources\StoredFileResource;
+use Newms87\Danx\Services\TranscodeFileService;
 use Symfony\Component\HttpFoundation\File\Exception\FileException;
 use Symfony\Component\HttpFoundation\File\Exception\UploadException;
 
@@ -25,10 +25,6 @@ class FileRepository
 
 	/**
 	 * Creates a File resource with the given contents and options
-	 * @param string $filepath
-	 * @param string $contents
-	 * @param array  $options
-	 * @return StoredFile
 	 */
 	public function createFileWithContents(string $filepath, string $contents, array $options = []): StoredFile
 	{
@@ -56,12 +52,6 @@ class FileRepository
 	/**
 	 * Creates a File resource with a presigned URL that can be used to upload a file directly to AWS S3 (or local
 	 * filesystem in case of local env)
-	 *
-	 * @param string $path
-	 * @param string $name
-	 * @param string $mime
-	 * @param array  $meta
-	 * @return StoredFile
 	 */
 	public function createFileWithUploadUrl(string $path, string $name, string $mime, array $meta = []): StoredFile
 	{
@@ -100,10 +90,6 @@ class FileRepository
 	 * Creates a presigned S3 file upload URL that can be used one time (within 30 minutes) by a 3rd party user.
 	 * Intended for usage in one of our FE clients, so they can upload directly to s3 instead of sending the file
 	 * through our server.
-	 *
-	 * @param string $filepath
-	 * @param string $mime
-	 * @return string
 	 */
 	public function createPresignedS3Url(string $filepath, string $mime): string
 	{
@@ -130,33 +116,27 @@ class FileRepository
 
 	/**
 	 * Marks a presigned file upload as completed and sets mime / size / url on the File record
-	 *
-	 * @throws ValidationError
 	 */
-	public function presignedUploadUrlCompleted(StoredFile $file): StoredFileResource
+	public function presignedUploadUrlCompleted(StoredFile $storedFile): array
 	{
-		if ($file->size > 0) {
+		if ($storedFile->size > 0) {
 			throw new ValidationError("This presigned file upload has already been completed");
 		}
 
-		$disk       = Storage::disk($file->disk);
-		$file->size = $disk->size($file->filepath);
-		$file->url  = $disk->url($file->filepath);
-		$file->save();
+		$disk             = Storage::disk($storedFile->disk);
+		$storedFile->size = $disk->size($storedFile->filepath);
+		$storedFile->url  = $disk->url($storedFile->filepath);
+		$storedFile->save();
 
-		return StoredFileResource::make($file);
+		if (config('danx.transcode.pdf_to_images') && $storedFile->isPdf()) {
+			app(TranscodeFileService::class)->dispatch(TranscodeFileService::TRANSCODE_PDF_TO_IMAGES, $storedFile);
+		}
+
+		return StoredFileResource::data($storedFile);
 	}
 
 	/**
 	 * Uploads a file and stores the file information in the database.
-	 *
-	 * @param UploadedFile $uploadedFile
-	 * @param string       $pathPrefix
-	 * @param bool         $validateMime
-	 * @param array|null   $allowedMimes
-	 * @param null         $meta
-	 * @return StoredFile
-	 * @throws ValidationException
 	 */
 	public function upload(
 		UploadedFile $uploadedFile,
@@ -228,12 +208,6 @@ class FileRepository
 
 	/**
 	 * Validates that an uploaded file is a file and that the mime type is accepted.
-	 *
-	 * @param UploadedFile $uploadedFile
-	 * @param bool         $validateMime
-	 * @param array|null   $allowedMimes
-	 *
-	 * @throws ValidationException
 	 */
 	public function validateFile(
 		UploadedFile $uploadedFile,

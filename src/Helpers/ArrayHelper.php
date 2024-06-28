@@ -101,4 +101,17 @@ class ArrayHelper
 			fn($value, $key) => Str::headline(str_replace('.', ' ', $key)) . ": " . (is_array($value) ? implode(', ',
 					$value) : $value)));
 	}
+
+	public static function recursiveUpdate(array $array1, array $array2): array
+	{
+		foreach($array2 as $key => $value) {
+			if (is_array($value) && isset($array1[$key]) && is_array($array1[$key])) {
+				$array1[$key] = static::recursiveUpdate($array1[$key], $value);
+			} else {
+				$array1[$key] = $value;
+			}
+		}
+
+		return $array1;
+	}
 }

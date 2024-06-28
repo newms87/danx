@@ -3,22 +3,19 @@
 namespace Newms87\Danx\Http\Controllers;
 
 use Exception;
+use Illuminate\Http\Request;
 use Newms87\Danx\Exceptions\ValidationError;
 use Newms87\Danx\Models\Utilities\StoredFile;
 use Newms87\Danx\Repositories\FileRepository;
 use Newms87\Danx\Resources\StoredFileResource;
-use Illuminate\Http\Request;
 
 class FileController extends Controller
 {
 	/**
 	 * Creates a File resource with a presigned URL that can be used to upload a file directly to AWS S3 (or local
 	 * filesystem in case of local env)
-	 *
-	 * @param Request $request
-	 * @return StoredFile
 	 */
-	public function presignedUploadUrl(Request $request)
+	public function presignedUploadUrl(Request $request): array
 	{
 		$path = $request->get('path');
 		$name = $request->get('name');
@@ -27,7 +24,7 @@ class FileController extends Controller
 
 		$file = app(FileRepository::class)->createFileWithUploadUrl($path, $name, $mime, $meta);
 
-		return StoredFileResource::make($file);
+		return StoredFileResource::data($file);
 	}
 
 	/**
@@ -58,15 +55,11 @@ class FileController extends Controller
 
 	/**
 	 * Marks a presigned file upload as completed and sets mime / size / url on the File record
-	 *
-	 * @param StoredFile $storedFile
-	 * @return StoredFile
-	 * @throws ValidationError
 	 */
-	public function presignedUploadUrlCompleted(StoredFile $storedFile)
+	public function presignedUploadUrlCompleted(StoredFile $storedFile): array
 	{
 		app(FileRepository::class)->presignedUploadUrlCompleted($storedFile);
 
-		return StoredFileResource::make($storedFile);
+		return StoredFileResource::data($storedFile);
 	}
 }

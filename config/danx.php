@@ -1,9 +1,15 @@
 <?php
 
 return [
-	'encryption'          => [
+	'encryption' => [
 		'key' => env('LARAVEL_ENV_ENCRYPTION_KEY'),
 	],
+
+	'transcode' => [
+		// Automatically transcode PDF files to images uploading
+		'pdf_to_images' => env('TRANSCODE_PDF_TO_IMAGES', false),
+	],
+
 	'audit'               => [
 		'enabled' => env('AUDIT_ENABLED', env('AUDITING_ENABLED', false)),
 

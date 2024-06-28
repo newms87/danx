@@ -29,6 +29,9 @@ abstract class ActionController extends Controller
 			throw new Exception('Please set the static $repo property in the ' . static::class . ' class');
 		}
 
+		if (!static::$resource) {
+			throw new Exception('Please set the static $resource property in the ' . static::class . ' class');
+		}
 		// TODO: Remove Controller and replace routes with the repo directly
 	}
 
@@ -40,15 +43,9 @@ abstract class ActionController extends Controller
 	/**
 	 * A single formatted model
 	 */
-	protected function item(Model|Collection|array|null $instance, array $includedFields = []): ?ActionResource
+	protected function item(Model|Collection|array|null $instance): array
 	{
-		if (static::$resource) {
-			static::$resource::$includedFields = $includedFields;
-
-			return static::$resource::make($instance);
-		}
-
-		return null;
+		return static::$resource::data($instance);
 	}
 
 	/**
@@ -56,11 +53,7 @@ abstract class ActionController extends Controller
 	 */
 	protected function collection(array|Collection|null $instances): AnonymousResourceCollection|array|Collection
 	{
-		if (static::$resource) {
-			return static::$resource::collection($instances);
-		}
-
-		return $instances;
+		return static::$resource::collection($instances);
 	}
 
 	/**
@@ -76,7 +69,7 @@ abstract class ActionController extends Controller
 			->paginate($request->perPage(50));
 
 		return [
-			'data' => $this->collection($results->items())->toArray($request->request),
+			'data' => $this->collection($results->items()),
 			'meta' => [
 				'total'        => $results->total(),
 				'current_page' => $results->currentPage(),
@@ -102,16 +95,13 @@ abstract class ActionController extends Controller
 			return response('Item not found', 404);
 		}
 
-		return $this->item($model, ['*'])?->toArray(request());
+		return static::$resource::details($model);
 	}
 
 	/**
 	 * Retrieve the data to populate the list of filters on the collection. Used for dropdowns, etc.
-	 *
-	 * @param PagerRequest $request
-	 * @return array
 	 */
-	public function fieldOptions(PagerRequest $request)
+	public function fieldOptions(PagerRequest $request): array
 	{
 		return $this->repo()->fieldOptions($request->filter());
 	}
@@ -188,7 +178,10 @@ abstract class ActionController extends Controller
 		]);
 	}
 
-	public function export(PagerRequest $request)
+	/**
+	 * Generate a CSV export of all the fields defined in the repository export filtering records by the given filter
+	 */
+	public function export(PagerRequest $request): string
 	{
 		$export = $this->repo()->export($request->filter() ?? []);
 

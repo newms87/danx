@@ -2,53 +2,50 @@
 
 namespace Newms87\Danx\Resources;
 
+use Illuminate\Database\Eloquent\Model;
 use Newms87\Danx\Models\Utilities\StoredFile;
 use Newms87\Danx\Services\TranscodeFileService;
 
-/**
- * @mixin StoredFile
- */
 class StoredFileResource extends ActionResource
 {
-	public static string $type = 'StoredFile';
-
-	public function data(): array
+	/**
+	 * @param StoredFile $model
+	 */
+	public static function data(Model $model, array $attributes = []): array
 	{
-		/** @var StoredFile|array $storedFile */
-		$storedFile = $this->resource;
+		$data = [
+			'id'         => $model->id,
+			'filename'   => $model->filename,
+			'url'        => $model->url,
+			'mime'       => $model->mime,
+			'size'       => $model->size,
+			'location'   => $model->location,
+			'meta'       => $model->meta,
+			'created_at' => $model->created_at,
+		];
 
-		if ($storedFile instanceof StoredFile && $storedFile->id) {
-			$data = [
-				'id'         => $storedFile->id,
-				'filename'   => $storedFile->filename,
-				'url'        => $storedFile->url,
-				'mime'       => $storedFile->mime,
-				'size'       => $storedFile->size,
-				'location'   => $storedFile->location,
-				'created_at' => $storedFile->created_at,
-			];
+		// If this file is not a transcoded file, add a thumb and optimized transcode entry
+		if (!$model->original_stored_file_id && $model->isPdf()) {
+			$thumb = $model->transcodes()->where('transcode_name', TranscodeFileService::TRANSCODE_PDF_TO_IMAGES)->first();
 
-			// If this file is not a transcoded file, add a thumb and optimized transcode entry
-			if (!$storedFile->original_stored_file_id && $storedFile->isPdf()) {
-				$thumb = $storedFile->transcodes()->where('transcode_name', TranscodeFileService::TRANSCODE_PDF_TO_IMAGES)->first();
+			if ($thumb) {
+				$data['thumb'] = StoredFileResource::data($thumb);
 
-				if ($thumb) {
-					$data['thumb'] = StoredFileResource::make($thumb);
-
-					// For now, optimized and thumb are the same, eventually we will want to optimize the thumb
-					$data['optimized'] = StoredFileResource::make($thumb);
-				}
+				// XXX: TODO For now, optimized and thumb are the same, eventually we will want to optimize the thumb
+				$data['optimized'] = StoredFileResource::data($thumb);
 			}
-
-			return $data;
-		} elseif (is_array($storedFile)) {
-			$storedFile = (object)$storedFile;
 		}
 
-		return [
-			'url'  => $storedFile->url,
-			'size' => $storedFile->size,
-			'mime' => $storedFile->mime,
-		];
+		return static::make($model, $data + $attributes);
+	}
+
+	/**
+	 * @param StoredFile $model
+	 */
+	public static function details(Model $model): array
+	{
+		return static::data($model, [
+			'transcodes' => StoredFileResource::collection($model->transcodes()->get()),
+		]);
 	}
 }

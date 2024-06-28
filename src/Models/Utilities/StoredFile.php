@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Facades\Storage;
+use Newms87\Danx\Helpers\ArrayHelper;
 use Newms87\Danx\Helpers\FileHelper;
 use Newms87\Danx\Traits\SerializesDates;
 use Newms87\Danx\Traits\UuidModelTrait;
@@ -273,6 +274,17 @@ class StoredFile extends Model implements AuditableContract
 	public function extension()
 	{
 		return pathinfo($this->filepath, PATHINFO_EXTENSION);
+	}
+
+	public function setMeta(string $key, $value)
+	{
+		$meta = $this->meta ?: [];
+
+		$meta[$key] = is_array($value) ? ArrayHelper::recursiveUpdate($meta[$key] ?? [], $value) : $value;
+
+		$this->setAttribute('meta', $meta);
+		
+		return $this;
 	}
 
 	/**
