@@ -6,8 +6,16 @@ use Newms87\Danx\Api\ConvertApi\ConvertApi;
 use Newms87\Danx\Exceptions\ApiException;
 use Newms87\Danx\Models\Utilities\StoredFile;
 
-class PdfToImagesTranscoder implements FileTranscoderContract
+class PdfToImagesTranscoder extends FileTranscoderAbstract implements FileTranscoderContract
 {
+	public function timeEstimate(StoredFile $storedFile): int
+	{
+		$MB = 1024 * 1024;
+
+		// 5s + 7.5s per MB for PDF to Images via Convert API
+		return 5000 + ($storedFile->size / $MB * 7500);
+	}
+
 	public function run(StoredFile $storedFile, array $options = []): array
 	{
 		$result = app(ConvertApi::class)->pdfToImage($storedFile->url);

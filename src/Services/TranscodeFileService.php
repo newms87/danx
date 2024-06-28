@@ -8,6 +8,7 @@ use Newms87\Danx\Exceptions\ApiException;
 use Newms87\Danx\Jobs\TranscodeStoredFileJob;
 use Newms87\Danx\Models\Utilities\StoredFile;
 use Newms87\Danx\Repositories\FileRepository;
+use Newms87\Danx\Services\TranscodeFile\FileTranscoderAbstract;
 use Newms87\Danx\Services\TranscodeFile\ImageToVerticalChunksTranscoder;
 use Newms87\Danx\Services\TranscodeFile\PdfToImagesTranscoder;
 
@@ -19,8 +20,8 @@ class TranscodeFileService
 		STATUS_COMPLETE = 'Complete';
 
 	const string
-		TRANSCODE_PDF_TO_IMAGES = 'pdf-to-images',
-		TRANSCODE_IMAGE_TO_VERTICAL_CHUNKS = 'image-to-vertical-chunks';
+		TRANSCODE_PDF_TO_IMAGES = 'PDF to Images',
+		TRANSCODE_IMAGE_TO_VERTICAL_CHUNKS = 'Image to Vertical Chunks';
 
 	const array TRANSCODERS = [
 		self::TRANSCODE_PDF_TO_IMAGES            => PdfToImagesTranscoder::class,
@@ -40,6 +41,20 @@ class TranscodeFileService
 	}
 
 	/**
+	 * Returns a Transcoder instance for the given transcode name
+	 */
+	public function getTranscoder(string $transcodeName): FileTranscoderAbstract
+	{
+		$transcoder = self::TRANSCODERS[$transcodeName] ?? null;
+
+		if (!$transcoder) {
+			throw new ApiException("Transcoder not found: $transcodeName");
+		}
+
+		return app($transcoder);
+	}
+
+	/**
 	 * Dispatch a transcode job for the stored file
 	 */
 	public function dispatch(string $transcodeName, StoredFile $storedFile, array $options = []): TranscodeStoredFileJob
@@ -47,6 +62,7 @@ class TranscodeFileService
 		$storedFile->setMeta('transcodes', [
 			$transcodeName => [
 				'status'       => self::STATUS_PENDING,
+				'progress'     => 0,
 				'requested_at' => now(),
 				'started_at'   => null,
 				'completed_at' => null,
@@ -73,13 +89,7 @@ class TranscodeFileService
 
 		$this->start($storedFile, $transcodeName);
 
-		$transcoder = self::TRANSCODERS[$transcodeName] ?? null;
-
-		if (!$transcoder) {
-			throw new ApiException("Transcoder not found: $transcodeName");
-		}
-
-		$transcodedFiles = app($transcoder)->run($storedFile, $options);
+		$transcodedFiles = $this->getTranscoder($transcodeName)->run($storedFile, $options);
 
 		foreach($transcodedFiles as $transcodedFile) {
 			$transcodedFile = $this->storeTranscodedFile($storedFile, $transcodeName, $transcodedFile['filename'], $transcodedFile['data']);
@@ -96,9 +106,14 @@ class TranscodeFileService
 	 */
 	public function start(StoredFile $storedFile, $transcodeName): void
 	{
+		$progress = $this->getTranscoder($transcodeName)->startingProgress($storedFile);
+		$estimate = $this->getTranscoder($transcodeName)->timeEstimate($storedFile);
+
 		$storedFile->setMeta('transcodes', [
 			$transcodeName => [
 				'status'       => self::STATUS_IN_PROGRESS,
+				'progress'     => $progress,
+				'estimate_ms'  => $estimate,
 				'started_at'   => now(),
 				'completed_at' => null,
 			],
@@ -113,6 +128,7 @@ class TranscodeFileService
 		$storedFile->setMeta('transcodes', [
 			$transcodeName => [
 				'status'       => self::STATUS_COMPLETE,
+				'progress'     => 100,
 				'completed_at' => now(),
 			],
 		])->save();

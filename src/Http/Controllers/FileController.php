@@ -62,4 +62,12 @@ class FileController extends Controller
 
 		return StoredFileResource::data($storedFile);
 	}
+
+	/**
+	 * Refreshes the stored file record for the FE
+	 */
+	public function refresh(StoredFile $storedFile)
+	{
+		return StoredFileResource::details($storedFile);
+	}
 }

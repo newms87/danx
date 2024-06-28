@@ -3,10 +3,10 @@
 namespace Newms87\Danx\Http\Routes;
 
 
-use Newms87\Danx\Http\Controllers\FileController;
 use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
 use Illuminate\Routing\RouteRegistrar;
 use Illuminate\Support\Facades\Route;
+use Newms87\Danx\Http\Controllers\FileController;
 
 class FileUploadRoute extends Route
 {
@@ -27,6 +27,8 @@ class FileUploadRoute extends Route
 				->name('file.upload-presigned-url-contents');
 			self::post('presigned-upload-url-completed/{storedFile}', [FileController::class, 'presignedUploadUrlCompleted'])
 				->name('file.presigned-upload-url-completed');
+			self::get('refresh/{storedFile}', [FileController::class, 'refresh'])
+				->name('file.refresh');
 		});
 	}
 }

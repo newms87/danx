@@ -13,7 +13,7 @@ use Throwable;
  * If you have a very long image, this will break it into
  * multiple images with the same width but a max height.
  */
-class ImageToVerticalChunksTranscoder implements FileTranscoderContract
+class ImageToVerticalChunksTranscoder extends FileTranscoderAbstract implements FileTranscoderContract
 {
 	/**
 	 * Options

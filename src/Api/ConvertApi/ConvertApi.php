@@ -2,12 +2,7 @@
 
 namespace Newms87\Danx\Api\ConvertApi;
 
-use GuzzleHttp\Exception\GuzzleException;
 use Newms87\Danx\Api\BasicAuthApi;
-use Newms87\Danx\Exceptions\ApiException;
-use Newms87\Danx\Exceptions\ApiRequestException;
-use Psr\Container\ContainerExceptionInterface;
-use Psr\Container\NotFoundExceptionInterface;
 
 class ConvertApi extends BasicAuthApi
 {
@@ -29,13 +24,7 @@ class ConvertApi extends BasicAuthApi
 	}
 
 	/**
-	 * @param       $url
-	 * @param array $params
-	 * @return mixed|null
-	 * @throws ApiRequestException
-	 * @throws ContainerExceptionInterface
-	 * @throws GuzzleException
-	 * @throws NotFoundExceptionInterface
+	 * Convert a webpage to a PDF file
 	 */
 	public function webToPdf($url, $params = [])
 	{
@@ -62,13 +51,7 @@ class ConvertApi extends BasicAuthApi
 	}
 
 	/**
-	 * @param $url
-	 * @return array|null
-	 * @throws ApiRequestException
-	 * @throws ContainerExceptionInterface
-	 * @throws GuzzleException
-	 * @throws NotFoundExceptionInterface
-	 * @throws ApiException
+	 * Convert a PDF to text
 	 */
 	public function pdfToText($url): ?array
 	{
@@ -95,13 +78,7 @@ class ConvertApi extends BasicAuthApi
 	}
 
 	/**
-	 * @param $url
-	 * @return array|null
-	 * @throws ApiException
-	 * @throws ApiRequestException
-	 * @throws ContainerExceptionInterface
-	 * @throws GuzzleException
-	 * @throws NotFoundExceptionInterface
+	 * Convert a PDF to a list of images (1 per page of the PDF)
 	 */
 	public function pdfToImage($url): ?array
 	{
