@@ -8,30 +8,38 @@ use Illuminate\Database\Eloquent\Model;
 
 abstract class ActionResource
 {
-    public static function make(Model $model, array $attributes): array
-    {
-        return $attributes + [
-                'id'          => $model->getKey(),
-                '__type'      => $model::class,
-                '__timestamp' => request()->header('X-Timestamp') ?: LARAVEL_START,
-            ];
-    }
+	public static function make(Model $model = null, array $attributes = []): array|null
+	{
+		if (!$model) {
+			return null;
+		}
 
-    public static function collection(Collection|array $collection, $nestedCallback = null)
-    {
-        $items = [];
+		return $attributes + static::data($model) + [
+				'id'          => $model->getKey(),
+				'__type'      => $model::class,
+				'__timestamp' => request()->header('X-Timestamp') ?: LARAVEL_START,
+			];
+	}
 
-        foreach($collection as $item) {
-            $items[] = static::data($item, $nestedCallback ? $nestedCallback($item) : []);
-        }
+	public static function collection(Collection|array|null $collection, $nestedCallback = null)
+	{
+		if (!$collection) {
+			return [];
+		}
 
-        return $items;
-    }
+		$items = [];
 
-    abstract public static function data(Model $model, array $attributes = []): array;
+		foreach($collection as $item) {
+			$items[] = static::make($item, $nestedCallback ? $nestedCallback($item) : []);
+		}
 
-    public static function details(Model $model): array
-    {
-        return static::data($model);
-    }
+		return $items;
+	}
+
+	abstract public static function data(Model $model): array;
+
+	public static function details(Model $model): array
+	{
+		return static::make($model);
+	}
 }

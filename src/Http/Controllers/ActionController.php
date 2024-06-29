@@ -45,7 +45,7 @@ abstract class ActionController extends Controller
 	 */
 	protected function item(Model|Collection|array|null $instance): array
 	{
-		return static::$resource::data($instance);
+		return static::$resource::make($instance);
 	}
 
 	/**

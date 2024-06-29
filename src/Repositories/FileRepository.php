@@ -132,7 +132,7 @@ class FileRepository
 			app(TranscodeFileService::class)->dispatch(TranscodeFileService::TRANSCODE_PDF_TO_IMAGES, $storedFile);
 		}
 
-		return StoredFileResource::data($storedFile);
+		return StoredFileResource::make($storedFile);
 	}
 
 	/**

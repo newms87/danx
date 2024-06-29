@@ -11,7 +11,7 @@ class StoredFileResource extends ActionResource
 	/**
 	 * @param StoredFile $model
 	 */
-	public static function data(Model $model, array $attributes = []): array
+	public static function data(Model $model): array
 	{
 		$data = [
 			'id'         => $model->id,
@@ -29,14 +29,14 @@ class StoredFileResource extends ActionResource
 			$thumb = $model->transcodes()->where('transcode_name', TranscodeFileService::TRANSCODE_PDF_TO_IMAGES)->first();
 
 			if ($thumb) {
-				$data['thumb'] = StoredFileResource::data($thumb);
+				$data['thumb'] = StoredFileResource::make($thumb);
 
 				// XXX: TODO For now, optimized and thumb are the same, eventually we will want to optimize the thumb
-				$data['optimized'] = StoredFileResource::data($thumb);
+				$data['optimized'] = StoredFileResource::make($thumb);
 			}
 		}
 
-		return static::make($model, $data + $attributes);
+		return $data;
 	}
 
 	/**
@@ -44,7 +44,7 @@ class StoredFileResource extends ActionResource
 	 */
 	public static function details(Model $model): array
 	{
-		return static::data($model, [
+		return static::make($model, [
 			'transcodes' => StoredFileResource::collection($model->transcodes()->get()),
 		]);
 	}

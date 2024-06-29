@@ -24,7 +24,7 @@ class FileController extends Controller
 
 		$file = app(FileRepository::class)->createFileWithUploadUrl($path, $name, $mime, $meta);
 
-		return StoredFileResource::data($file);
+		return StoredFileResource::make($file);
 	}
 
 	/**
@@ -60,7 +60,7 @@ class FileController extends Controller
 	{
 		app(FileRepository::class)->presignedUploadUrlCompleted($storedFile);
 
-		return StoredFileResource::data($storedFile);
+		return StoredFileResource::make($storedFile);
 	}
 
 	/**
