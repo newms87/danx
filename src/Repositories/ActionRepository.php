@@ -91,6 +91,7 @@ abstract class ActionRepository
 		return match ($action) {
 			'create' => $this->model()->fill($data)->save(),
 			'update' => $model->update($data),
+			'copy' => $model->replicate()->save(),
 			'delete' => $model->delete(),
 			default => throw new ValidationError("Invalid action: " . $action)
 		};

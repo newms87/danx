@@ -8,15 +8,19 @@ use Illuminate\Database\Eloquent\Model;
 
 abstract class ActionResource
 {
+	public static string $type = '';
+
 	public static function make(Model $model = null, array $attributes = []): array|null
 	{
+		$type = static::$type ?: basename(preg_replace("#\\\\#", "/", static::class));
+
 		if (!$model) {
 			return null;
 		}
 
 		return $attributes + static::data($model) + [
 				'id'          => $model->getKey(),
-				'__type'      => $model::class,
+				'__type'      => $type,
 				'__timestamp' => request()->header('X-Timestamp') ?: LARAVEL_START,
 			];
 	}
