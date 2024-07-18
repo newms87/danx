@@ -114,4 +114,67 @@ class ArrayHelper
 
 		return $array1;
 	}
+
+	public static function recursiveKsort(&$array): void
+	{
+		foreach($array as &$value) {
+			if (is_array($value)) {
+				static::recursiveKsort($value);
+			}
+		}
+		ksort($array);
+	}
+
+	public static function extractNestedData($data, $includedFields): array|string|int|float|bool|null
+	{
+		if (!$includedFields || !$data || is_scalar($data)) {
+			return $data;
+		}
+
+		$extracted = [];
+		foreach($includedFields as $field) {
+			$value = data_get($data, $field);
+
+			// Field can be an array of fields to extract
+			if ($value !== null) {
+				ArrayHelper::setNestedData($extracted, $field, $value);
+			}
+		}
+
+		return $extracted;
+	}
+
+	public static function setNestedData(&$data, $field, $value): void
+	{
+		$keys    = explode('.', $field);
+		$current = &$data;
+
+		foreach($keys as $i => $key) {
+			if ($key === '*') {
+				if (!is_array($current)) {
+					$current = [];
+				}
+
+				// If this is the second-to-last key, create or update the structure
+				if ($i === count($keys) - 2) {
+					$lastKey = $keys[$i + 1];
+					foreach($value as $index => $item) {
+						if (!isset($current[$index])) {
+							$current[$index] = [];
+						}
+						$current[$index][$lastKey] = $item;
+					}
+
+					return;
+				}
+			} else {
+				if (!isset($current[$key])) {
+					$current[$key] = [];
+				}
+				$current = &$current[$key];
+			}
+		}
+
+		$current = $value;
+	}
 }
