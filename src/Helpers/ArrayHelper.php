@@ -125,6 +125,34 @@ class ArrayHelper
 		ksort($array);
 	}
 
+	public static function crossProductExtractData(array $data, array $fields): array
+	{
+		$crossProduct = [];
+		foreach($fields as $field) {
+			$extracted = data_get($data, $field);
+
+			if (!is_array($extracted) || !array_is_numeric($extracted)) {
+				$extracted = [$extracted];
+			}
+
+			$newCrossProduct = [];
+			foreach($extracted as $item) {
+				if (!$crossProduct) {
+					$newCrossProduct[] = [$field => $item];
+				} else {
+					foreach($crossProduct as $crossProductItem) {
+						$crossProductItem[$field] = $item;
+						$newCrossProduct[]        = $crossProductItem;
+					}
+				}
+			}
+
+			$crossProduct = $newCrossProduct;
+		}
+
+		return $crossProduct;
+	}
+
 	public static function extractNestedData($data, $includedFields): array|string|int|float|bool|null
 	{
 		if (!$includedFields || !$data || is_scalar($data)) {
@@ -142,6 +170,99 @@ class ArrayHelper
 		}
 
 		return $extracted;
+	}
+
+	/**
+	 * Recursively filters nested data by a field and value.
+	 *  - For top level filters, will return null if the field does not exist, or the fields value does not match
+	 *    provided value.
+	 *  - For nested filters, will always return the higher-level data structure, and will filter out the nested
+	 *    data
+	 *
+	 *  For example:
+	 *  Given the data:
+	 *  [
+	 *    'name' => 'Dan Newman',
+	 *    'addresses' => [
+	 *       ['zip' => '12345', 'type' => 'primary'],
+	 *       ['zip' => '80033', 'type' => 'shipping'],
+	 *       ['zip' => '800349', 'type' => 'billing'],
+	 *    ],
+	 *  ]
+	 *
+	 * - field = 'addresses.*.zip' and value = '800349'
+	 *   return:
+	 * [
+	 *   'addresses' => [
+	 *     ['zip' => '800349', 'type' => 'billing'],
+	 *   ],
+	 * ]
+	 *
+	 * - field = 'name' and value = 'Bill'
+	 *   return: null
+	 *
+	 * - field = 'name' and value = 'Dan Newman'
+	 *  return: [...] (the original data)
+	 */
+	public static function filterNestedData($data, $field, $value): ?array
+	{
+		$keys    = $field ? explode('.', $field) : [];
+		$current = &$data;
+
+		foreach($keys as $i => $key) {
+			// If the next key is a recursion into a nested array, recursively filter the data
+			if ($key === '*') {
+				// If the key is * and current data is not an array, return null
+				if (!is_array($current)) {
+					return null;
+				}
+
+				$childKey = implode('.', array_slice($keys, $i + 1));
+
+				$current = array_values(array_filter(array_map(fn($currentItem) => static::filterNestedData($currentItem, $childKey, $value), $current), fn($currentItem) => $currentItem !== null));
+
+				return $current ? $data : null;
+			} else {
+				if (!isset($current[$key])) {
+					return null;
+				}
+				$current = &$current[$key];
+			}
+		}
+
+		// Handle special cases for current when it is an array
+		if (is_array($current)) {
+			if (is_array($value)) {
+				// If the value is non-associative, filter out any items that do not match the value object structure
+				if (array_is_numeric($current)) {
+					$current = array_values(array_filter($current, fn($currentItem) => static::filterNestedData($currentItem, '', $value) !== null));
+
+					return $current ? $data : null;
+				}
+
+				// If the value is associative, make a hash of the value and current data and compare
+				ArrayHelper::recursiveKsort($value);
+				ArrayHelper::recursiveKsort($current);
+				$valueHash   = md5(json_encode($value));
+				$currentHash = md5(json_encode($current));
+				if ($valueHash !== $currentHash) {
+					return null;
+				}
+			} else {
+				// If the value is a scalar, filter out any items that do not match the value
+				$current = array_values(array_filter($current, fn($item) => $item === $value));
+				// If none of the array items match the value, all the data is filtered out
+				if (!$current) {
+					return null;
+				}
+			}
+		} elseif ($current !== $value) {
+			// If current is a scalar, and it does not match the value, return null
+			return null;
+		}
+
+		// if the data has not been filtered out, return the original data
+		return $data;
 	}
 
 	public static function setNestedData(&$data, $field, $value): void
