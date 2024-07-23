@@ -9,6 +9,7 @@ use Illuminate\Support\Str;
 use Newms87\Danx\Library\CsvExport;
 use Newms87\Danx\Models\Utilities\StoredFile as FileModel;
 use Symfony\Component\Mime\MimeTypes;
+use Symfony\Component\Yaml\Dumper as YamlDumper;
 use Symfony\Component\Yaml\Parser as YamlParser;
 use Throwable;
 use ZipArchive;
@@ -258,6 +259,14 @@ class FileHelper
 		}
 
 		return $contents;
+	}
+
+	/**
+	 * Converts data into YAML format
+	 */
+	public static function toYaml(array $data, $indentation = 2)
+	{
+		return (new YamlDumper($indentation))->dump($data);
 	}
 
 	/**
