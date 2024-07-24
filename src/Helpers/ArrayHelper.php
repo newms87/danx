@@ -141,11 +141,14 @@ class ArrayHelper
 						break;
 					}
 					foreach($source as $key => $value) {
-						$current[$key] = [];
-						$nextPart      = $parts[$i + 1] ?? null;
+						if (!isset($current[$key])) {
+							$current[$key] = [];
+						}
+						$nextPart = $parts[$i + 1] ?? null;
 						if ($nextPart) {
 							$subFields     = [implode('.', array_slice($parts, $i + 1))];
-							$current[$key] = self::extractNestedData($value, $subFields);
+							$subExtracted  = self::extractNestedData($value, $subFields);
+							$current[$key] = array_merge_recursive($current[$key], $subExtracted);
 						} else {
 							$current[$key] = $value;
 						}
@@ -155,18 +158,18 @@ class ArrayHelper
 					if ($i === count($parts) - 1) {
 						$current[$part] = $source[$part];
 					} else {
-						$current[$part] = [];
-						$current        = &$current[$part];
-						$source         = $source[$part];
+						if (!isset($current[$part])) {
+							$current[$part] = [];
+						}
+						$current = &$current[$part];
+						$source  = $source[$part];
 					}
 				} else {
 					break;
 				}
 			}
 		}
-
-		dump('extracted', $extracted);
-
+		
 		return $extracted;
 	}
 
