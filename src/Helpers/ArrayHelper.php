@@ -128,16 +128,19 @@ class ArrayHelper
 			return $data;
 		}
 
-		$extracted = [];
+		$extracted      = [];
+		$allFieldsExist = true;
 
 		foreach($includedFields as $field) {
-			$parts   = explode('.', $field);
-			$current = &$extracted;
-			$source  = $data;
+			$parts       = explode('.', $field);
+			$current     = &$extracted;
+			$source      = $data;
+			$fieldExists = true;
 
 			foreach($parts as $i => $part) {
 				if ($part === '*') {
 					if (!is_array($source)) {
+						$fieldExists = false;
 						break;
 					}
 					foreach($source as $key => $value) {
@@ -146,8 +149,12 @@ class ArrayHelper
 						}
 						$nextPart = $parts[$i + 1] ?? null;
 						if ($nextPart) {
-							$subFields     = [implode('.', array_slice($parts, $i + 1))];
-							$subExtracted  = self::extractNestedData($value, $subFields);
+							$subFields    = [implode('.', array_slice($parts, $i + 1))];
+							$subExtracted = self::extractNestedData($value, $subFields);
+							if ($subExtracted === null) {
+								$fieldExists = false;
+								break 2;
+							}
 							$current[$key] = array_merge_recursive($current[$key], $subExtracted);
 						} else {
 							$current[$key] = $value;
@@ -165,11 +172,21 @@ class ArrayHelper
 						$source  = $source[$part];
 					}
 				} else {
+					$fieldExists = false;
 					break;
 				}
 			}
+
+			if (!$fieldExists) {
+				$allFieldsExist = false;
+				break;
+			}
 		}
-		
+
+		if (!$allFieldsExist) {
+			return null;
+		}
+
 		return $extracted;
 	}
 
