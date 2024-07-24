@@ -50,42 +50,6 @@ class ArrayHelper
 	}
 
 	/**
-	 * Group an array by a dot notation key
-	 *
-	 * @param              $array
-	 * @param string|array $key Either dot notation key or an array of keys. ie: ['key1', 'key2', 'key3'] or
-	 *                          'key1.key2.key3'
-	 * @return array
-	 */
-	public static function groupByDot($array, $key): array
-	{
-		// If the array is not an array just return
-		if (!is_array($array)) {
-			return [];
-		}
-
-		$keys     = is_array($key) ? $key : explode('.', $key);
-		$firstKey = array_shift($keys);
-
-		if (array_key_exists($firstKey, $array)) {
-			return self::groupByDot($array[$firstKey], $keys);
-		}
-
-		$result = [];
-		foreach($array as $item) {
-			if (!is_array($item)) {
-				$result[] = $item;
-			} elseif (array_key_exists($firstKey, $item)) {
-				$result[$item[$firstKey]] = $item;
-			} else {
-				$result[] = $item;
-			}
-		}
-
-		return $result;
-	}
-
-	/**
 	 * Convert an array to a string using the keys as a label and the values as the content
 	 * The keys will be converted to Headline case (ie: replacing underscores/dashes/dots with spaces and capitalizing
 	 * each word)
@@ -155,19 +119,53 @@ class ArrayHelper
 
 	public static function extractNestedData($data, $includedFields): array|string|int|float|bool|null
 	{
-		if (!$includedFields || !$data || is_scalar($data)) {
+		// If the data is a scalar, and a field is provided, return null since the field does not exist
+		if (is_scalar($data)) {
+			return $includedFields ? null : $data;
+		}
+
+		if (!$includedFields || !$data) {
 			return $data;
 		}
 
 		$extracted = [];
-		foreach($includedFields as $field) {
-			$value = data_get($data, $field);
 
-			// Field can be an array of fields to extract
-			if ($value !== null) {
-				ArrayHelper::setNestedData($extracted, $field, $value);
+		foreach($includedFields as $field) {
+			$parts   = explode('.', $field);
+			$current = &$extracted;
+			$source  = $data;
+
+			foreach($parts as $i => $part) {
+				if ($part === '*') {
+					if (!is_array($source)) {
+						break;
+					}
+					foreach($source as $key => $value) {
+						$current[$key] = [];
+						$nextPart      = $parts[$i + 1] ?? null;
+						if ($nextPart) {
+							$subFields     = [implode('.', array_slice($parts, $i + 1))];
+							$current[$key] = self::extractNestedData($value, $subFields);
+						} else {
+							$current[$key] = $value;
+						}
+					}
+					break;
+				} elseif (isset($source[$part])) {
+					if ($i === count($parts) - 1) {
+						$current[$part] = $source[$part];
+					} else {
+						$current[$part] = [];
+						$current        = &$current[$part];
+						$source         = $source[$part];
+					}
+				} else {
+					break;
+				}
 			}
 		}
+
+		dump('extracted', $extracted);
 
 		return $extracted;
 	}
