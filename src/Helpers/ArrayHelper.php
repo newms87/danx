@@ -89,6 +89,26 @@ class ArrayHelper
 		ksort($array);
 	}
 
+	/**
+	 * Merges two arrays recursively, with the values of the second array taking precedence over the first
+	 */
+	public static function mergeArraysRecursively($arr1, $arr2)
+	{
+		foreach($arr2 as $key => $value) {
+			if (is_array($value) && isset($arr1[$key]) && is_array($arr1[$key])) {
+				$arr1[$key] = self::mergeArraysRecursively($arr1[$key], $value);
+			} else {
+				$arr1[$key] = $value;
+			}
+		}
+
+		return $arr1;
+	}
+
+	/**
+	 * Cross Product Extract Data takes an array of data and a list of fields to extract from the data. It then returns
+	 * an array of arrays where each array is a cross product of the extracted fields.
+	 */
 	public static function crossProductExtractData(array $data, array $fields): array
 	{
 		$crossProduct = [];
@@ -117,6 +137,29 @@ class ArrayHelper
 		return $crossProduct;
 	}
 
+	/**
+	 * Extracts nested data from a data structure based on a list of fields. The fields can be nested using dot
+	 * notation, and can include wildcards to extract all fields from an array.
+	 *
+	 * For example:
+	 * Given the data:
+	 * name: 'Dan Newman',
+	 * dob: '01/01/1990',
+	 * addresses:
+	 *  - zip: '12345',
+	 *    type: 'primary'
+	 *  - zip: '80033',
+	 *    type: 'shipping'
+	 *
+	 * $includedFields = ['name', 'addresses.*.zip']
+	 * return:
+	 *
+	 * name: 'Dan Newman'
+	 * addresses:
+	 *  - zip: '12345'
+	 *  - zip: '80033'
+	 *
+	 */
 	public static function extractNestedData($data, $includedFields): array|string|int|float|bool|null
 	{
 		// If the data is a scalar, and a field is provided, return null since the field does not exist
@@ -155,7 +198,7 @@ class ArrayHelper
 								$fieldExists = false;
 								break 2;
 							}
-							$current[$key] = array_merge_recursive($current[$key], $subExtracted);
+							$current[$key] = self::mergeArraysRecursively($current[$key], $subExtracted);
 						} else {
 							$current[$key] = $value;
 						}
@@ -199,28 +242,23 @@ class ArrayHelper
 	 *
 	 *  For example:
 	 *  Given the data:
-	 *  [
-	 *    'name' => 'Dan Newman',
-	 *    'addresses' => [
-	 *       ['zip' => '12345', 'type' => 'primary'],
-	 *       ['zip' => '80033', 'type' => 'shipping'],
-	 *       ['zip' => '800349', 'type' => 'billing'],
-	 *    ],
-	 *  ]
+	 *  name: Dan Newman
+	 *  addresses:
+	 *   - zip: '12345'
+	 *     type: primary
+	 *   - zip: '80033'
+	 *     type: shipping
+	 *   - zip: '800349'
+	 *     type: billing
 	 *
-	 * - field = 'addresses.*.zip' and value = '800349'
-	 *   return:
-	 * [
-	 *   'addresses' => [
-	 *     ['zip' => '800349', 'type' => 'billing'],
-	 *   ],
-	 * ]
+	 * $field = 'addresses.*.zip'
+	 * $value = '800349'
 	 *
-	 * - field = 'name' and value = 'Bill'
-	 *   return: null
-	 *
-	 * - field = 'name' and value = 'Dan Newman'
-	 *  return: [...] (the original data)
+	 * return:
+	 * name: Dan Newman
+	 * addresses:
+	 * - zip: '800349'
+	 *   type: billing
 	 */
 	public static function filterNestedData($data, $field, $value): ?array
 	{
@@ -283,6 +321,10 @@ class ArrayHelper
 		return $data;
 	}
 
+	/**
+	 * Sets nested data in a data structure based on a field. The field can be nested using dot notation, and can
+	 * include wildcards to set all fields in an array.
+	 */
 	public static function setNestedData(&$data, $field, $value): void
 	{
 		$keys    = explode('.', $field);
