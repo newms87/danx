@@ -117,8 +117,8 @@ class FilterBuilder
 	 */
 	public function addFilterClause($rootQuery, $key, $value, $grouping = self::GROUP_AND, $groupQuery = null)
 	{
-		if (($key === 'and' || $key === 'or') && array_is_numeric(($value))) {
-			throw new Exception("$key operator cannot operate on numeric indices");
+		if (($key === 'and' || $key === 'or') && !is_associative_array(($value))) {
+			throw new Exception("$key operator cannot operate on non-associative arrays");
 		}
 
 		if (!$groupQuery) {
@@ -144,7 +144,7 @@ class FilterBuilder
 			if ($value !== null) {
 				if (!is_array($value)) {
 					$groupQuery->{$whereFn}($columnKey, $value);
-				} elseif (array_is_numeric($value)) {
+				} elseif (!is_associative_array($value)) {
 					$this->buildWhereIn($groupQuery, $columnKey, $value, $whereFn);
 				} else {
 					//If the indexes are not numeric, they are operators for different types of filters

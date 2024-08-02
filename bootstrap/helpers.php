@@ -47,16 +47,14 @@ if (!function_exists('user')) {
 	}
 }
 
-if (!function_exists('array_is_numeric')) {
-	function array_is_numeric($array)
+if (!function_exists('is_associative_array')) {
+	function is_associative_array($array): bool
 	{
-		foreach($array as $key => $value) {
-			if (!is_int($key)) {
-				return false;
-			}
+		if (!is_array($array)) {
+			return false;
 		}
 
-		return true;
+		return array_keys($array) !== range(0, count($array) - 1);
 	}
 }
 

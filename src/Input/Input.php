@@ -3,11 +3,11 @@
 namespace Newms87\Danx\Input;
 
 use Exception;
-use Newms87\Danx\Exceptions\InputValidationException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\HigherOrderCollectionProxy;
 use Illuminate\Validation\ValidationException;
+use Newms87\Danx\Exceptions\InputValidationException;
 
 class Input extends Collection
 {
@@ -133,7 +133,7 @@ class Input extends Collection
 
 					// Handle array comparison to see if any of the values set in our array deviate from the equivalent value in the comparison array
 					if (array_key_exists($key, $input) && is_array($value)) {
-						if (array_is_numeric($value)) {
+						if (!is_associative_array($value)) {
 							if (!array_diff($value, $input[$key])) {
 								continue;
 							}
