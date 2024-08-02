@@ -115,7 +115,7 @@ class ArrayHelper
 		foreach($fields as $field) {
 			$extracted = data_get($data, $field);
 
-			if (!is_array($extracted) || !is_associative_array($extracted)) {
+			if (!is_array($extracted) || is_associative_array($extracted)) {
 				$extracted = [$extracted];
 			}
 
@@ -359,7 +359,7 @@ class ArrayHelper
 		$current = $value;
 	}
 
-	public static function getNestedFieldList($object): array
+	public static function getNestedFieldList($object, $prefix = ''): array
 	{
 		if (empty($object)) {
 			return [];
@@ -367,22 +367,21 @@ class ArrayHelper
 
 		$fields = collect();
 
-		if (is_array($object) || is_object($object)) {
-			foreach((array)$object as $fieldName => $fieldValue) {
-				$fields->push($fieldName);
+		foreach((array)$object as $fieldName => $fieldValue) {
+			$fullFieldName = $prefix ? "{$prefix}.{$fieldName}" : $fieldName;
+			$fields->push($fullFieldName);
 
-				if (is_array($fieldValue)) {
+			if (is_array($fieldValue) || is_object($fieldValue)) {
+				if (is_associative_array($fieldValue)) {
+					$nestedFields = self::getNestedFieldList($fieldValue, $fullFieldName);
+					$fields       = $fields->merge($nestedFields);
+				} else {
 					foreach($fieldValue as $item) {
 						if (is_array($item) || is_object($item)) {
-							$nestedFields = collect(ArrayHelper::getNestedFieldList($item))
-								->map(fn($nestedField) => "{$fieldName}.*.{$nestedField}");
+							$nestedFields = self::getNestedFieldList($item, "{$fullFieldName}.*");
 							$fields       = $fields->merge($nestedFields);
 						}
 					}
-				} elseif (is_array($fieldValue) || is_object($fieldValue)) {
-					$nestedFields = collect(ArrayHelper::getNestedFieldList($fieldValue))
-						->map(fn($nestedField) => "{$fieldName}.{$nestedField}");
-					$fields       = $fields->merge($nestedFields);
 				}
 			}
 		}
