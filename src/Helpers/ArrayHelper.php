@@ -171,18 +171,17 @@ class ArrayHelper
 			return $data;
 		}
 
-		$extracted = [];
+		$extracted         = [];
+		$anyFieldExtracted = false;
 
 		foreach($includedFields as $field) {
-			$parts       = explode('.', $field);
-			$current     = &$extracted;
-			$source      = $data;
-			$fieldExists = true;
+			$parts   = explode('.', $field);
+			$current = &$extracted;
+			$source  = $data;
 
 			foreach($parts as $i => $part) {
 				if ($part === '*') {
 					if (!is_array($source)) {
-						$fieldExists = false;
 						break;
 					}
 					foreach($source as $key => $value) {
@@ -193,17 +192,20 @@ class ArrayHelper
 						if ($nextPart) {
 							$subFields    = [implode('.', array_slice($parts, $i + 1))];
 							$subExtracted = self::extractNestedData($value, $subFields);
-							if ($subExtracted !== null) {
-								$current[$key] = self::mergeArraysRecursively($current[$key], $subExtracted);
+							if (!empty($subExtracted)) {
+								$current[$key]     = self::mergeArraysRecursively($current[$key], $subExtracted);
+								$anyFieldExtracted = true;
 							}
 						} else {
-							$current[$key] = $value;
+							$current[$key]     = $value;
+							$anyFieldExtracted = true;
 						}
 					}
 					break;
 				} elseif (isset($source[$part])) {
 					if ($i === count($parts) - 1) {
-						$current[$part] = $source[$part];
+						$current[$part]    = $source[$part];
+						$anyFieldExtracted = true;
 					} else {
 						if (!isset($current[$part])) {
 							$current[$part] = [];
@@ -211,17 +213,12 @@ class ArrayHelper
 						$current = &$current[$part];
 						$source  = $source[$part];
 					}
-				} else {
-					$fieldExists = false;
-					break;
 				}
 			}
-
-			// We don't break the loop if a field doesn't exist, we just skip it
 		}
 
-		// Return the extracted data even if some fields were not found
-		return $extracted;
+		// Return null if no fields were extracted
+		return $anyFieldExtracted ? $extracted : null;
 	}
 
 	/**
