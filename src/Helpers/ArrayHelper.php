@@ -225,48 +225,45 @@ class ArrayHelper
 	 * Sorts nested data by a field and direction. The field can be nested using dot notation, and can include wildcards
 	 * to sort all fields in an array.
 	 */
-	public static function sortNestedData(&$data, $field, $direction = 'asc'): void
+	public static function sortByNestedData(&$data, $field, $direction = 'asc'): void
 	{
 		$keys = explode('.', $field);
 
-		if (count($keys) === 1) {
-			usort($data, function ($a, $b) use ($field, $direction) {
-				$comparison = $a[$field] <=> $b[$field];
+		usort($data, function ($a, $b) use ($keys, $direction) {
+			$valuesA = self::getNestedValues($a, $keys);
+			$valuesB = self::getNestedValues($b, $keys);
 
-				return $direction === 'asc' ? $comparison : -$comparison;
-			});
-		} else {
-			$current = &$data;
+			// Compare the first non-equal values
+			foreach($valuesA as $index => $valueA) {
+				$valueB     = $valuesB[$index] ?? null;
+				$comparison = $valueA <=> $valueB;
+				if ($comparison !== 0) {
+					return $direction === 'asc' ? $comparison : -$comparison;
+				}
+			}
 
-			foreach($keys as $i => $key) {
+			return 0; // All values are equal
+		});
+	}
+
+	private static function getNestedValues($array, $keys)
+	{
+		$values = [$array];
+		foreach($keys as $key) {
+			$newValues = [];
+			foreach($values as $value) {
 				if ($key === '*') {
-					if (!is_array($current)) {
-						return;
+					if (is_array($value)) {
+						$newValues = array_merge($newValues, array_values($value));
 					}
-
-					$childKey = implode('.', array_slice($keys, $i + 1));
-
-					foreach($current as &$currentItem) {
-						static::sortNestedData($currentItem, $childKey, $direction);
-					}
-
-					return;
-				} else {
-					if (!isset($current[$key])) {
-						return;
-					}
-					$current = &$current[$key];
+				} elseif (is_array($value) && isset($value[$key])) {
+					$newValues[] = $value[$key];
 				}
 			}
-
-			if (is_array($current)) {
-				if ($direction === 'asc') {
-					usort($current, fn($a, $b) => $a <=> $b);
-				} else {
-					usort($current, fn($a, $b) => $b <=> $a);
-				}
-			}
+			$values = $newValues;
 		}
+
+		return $values;
 	}
 
 	/**
