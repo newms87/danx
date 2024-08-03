@@ -222,6 +222,54 @@ class ArrayHelper
 	}
 
 	/**
+	 * Sorts nested data by a field and direction. The field can be nested using dot notation, and can include wildcards
+	 * to sort all fields in an array.
+	 */
+	public static function sortNestedData(&$data, $field, $direction = 'asc'): void
+	{
+		$keys = explode('.', $field);
+
+		if (count($keys) === 1) {
+			usort($data, function ($a, $b) use ($field, $direction) {
+				$comparison = $a[$field] <=> $b[$field];
+
+				return $direction === 'asc' ? $comparison : -$comparison;
+			});
+		} else {
+			$current = &$data;
+
+			foreach($keys as $i => $key) {
+				if ($key === '*') {
+					if (!is_array($current)) {
+						return;
+					}
+
+					$childKey = implode('.', array_slice($keys, $i + 1));
+
+					foreach($current as &$currentItem) {
+						static::sortNestedData($currentItem, $childKey, $direction);
+					}
+
+					return;
+				} else {
+					if (!isset($current[$key])) {
+						return;
+					}
+					$current = &$current[$key];
+				}
+			}
+
+			if (is_array($current)) {
+				if ($direction === 'asc') {
+					usort($current, fn($a, $b) => $a <=> $b);
+				} else {
+					usort($current, fn($a, $b) => $b <=> $a);
+				}
+			}
+		}
+	}
+
+	/**
 	 * Recursively filters nested data by a field and value.
 	 *  - For top level filters, will return null if the field does not exist, or the fields value does not match
 	 *    provided value.
