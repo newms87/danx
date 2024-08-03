@@ -171,8 +171,7 @@ class ArrayHelper
 			return $data;
 		}
 
-		$extracted      = [];
-		$allFieldsExist = true;
+		$extracted = [];
 
 		foreach($includedFields as $field) {
 			$parts       = explode('.', $field);
@@ -194,11 +193,9 @@ class ArrayHelper
 						if ($nextPart) {
 							$subFields    = [implode('.', array_slice($parts, $i + 1))];
 							$subExtracted = self::extractNestedData($value, $subFields);
-							if ($subExtracted === null) {
-								$fieldExists = false;
-								break 2;
+							if ($subExtracted !== null) {
+								$current[$key] = self::mergeArraysRecursively($current[$key], $subExtracted);
 							}
-							$current[$key] = self::mergeArraysRecursively($current[$key], $subExtracted);
 						} else {
 							$current[$key] = $value;
 						}
@@ -220,16 +217,10 @@ class ArrayHelper
 				}
 			}
 
-			if (!$fieldExists) {
-				$allFieldsExist = false;
-				break;
-			}
+			// We don't break the loop if a field doesn't exist, we just skip it
 		}
 
-		if (!$allFieldsExist) {
-			return null;
-		}
-
+		// Return the extracted data even if some fields were not found
 		return $extracted;
 	}
 
