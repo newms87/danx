@@ -99,6 +99,14 @@ abstract class ActionController extends Controller
 	}
 
 	/**
+	 * Retrieve a related resource for the given model
+	 */
+	public function relation($model, $relation): mixed
+	{
+		return static::$resource::relation($model, $relation);
+	}
+
+	/**
 	 * Retrieve the data to populate the list of filters on the collection. Used for dropdowns, etc.
 	 */
 	public function fieldOptions(PagerRequest $request): array
