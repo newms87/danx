@@ -33,19 +33,19 @@ function response($message, $httpStatusCode = 200): Response { }
 
 function cache($key = null, $default = null): Cache { }
 
-function database_path($path): string { }
+function database_path($path = ''): string { }
 
-function storage_path($path): string { }
+function storage_path($path = ''): string { }
 
-function public_path($path): string { }
+function public_path($path = ''): string { }
 
-function resource_path($path): string { }
+function resource_path($path = ''): string { }
 
-function base_path($path): string { }
+function base_path($path = ''): string { }
 
-function app_path($path): string { }
+function app_path($path = ''): string { }
 
-function config_path($path): string { }
+function config_path($path = ''): string { }
 
 function now(): Carbon { }
 

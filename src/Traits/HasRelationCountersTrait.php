@@ -2,6 +2,7 @@
 
 namespace Newms87\Danx\Traits;
 
+use App\Models\Workflow\WorkflowRun;
 use Exception;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -11,16 +12,17 @@ use Illuminate\Database\Eloquent\Model;
  */
 trait HasRelationCountersTrait
 {
-	public static function bootHasRelationCountersTrait(): void
+	public static function registerRelationshipCounters(): void
 	{
-		$counters = (new static)->relationCounters;
+		$model    = (new static);
+		$counters = $model->relationCounters;
 
 		if (!$counters) {
 			throw new Exception("You must define the property \$relationCounters = [...] in " . static::class . " to use the HasRelationCountersTrait.");
 		}
 
 		/** @var Model $relatedModelClass */
-		foreach(array_keys($counters) as $relatedModelClass) {
+		foreach($counters as $relatedModelClass => $relatedCounter) {
 			$relatedModelClass::created(function (Model $model) {
 				static::syncRelatedModels($model);
 			});
@@ -40,7 +42,7 @@ trait HasRelationCountersTrait
 		}
 
 		foreach($modelCounters as $relationshipName => $counterField) {
-			$relatedModels = static::query()->whereHas($relationshipName, fn(Builder $builder) => $builder->where('id', $model->id))->get();
+			$relatedModels = static::query()->whereHas($relationshipName, fn(Builder $builder) => $builder->withTrashed()->where($model->getQualifiedKeyName(), $model->id))->get();
 			foreach($relatedModels as $relatedModel) {
 				$relatedModel->forceFill([$counterField => $relatedModel->{$relationshipName}->count()])->save();
 			}
