@@ -24,7 +24,7 @@ class StoredFile extends Model implements AuditableContract
 		SoftDeletes,
 		UuidModelTrait;
 
-	const
+	const string
 		MIME_3G2 = 'video/3gpp2',
 		MIME_3GP = 'video/3gpp',
 		MIME_EPS = 'image/x-eps',
@@ -55,7 +55,7 @@ class StoredFile extends Model implements AuditableContract
 		MIME_OPEN_SHEET = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
 		MIME_ZIP = 'application/zip';
 
-	const IMAGE_MIMES = [
+	const array IMAGE_MIMES = [
 		self::MIME_EPS,
 		self::MIME_GIF,
 		self::MIME_HEIC,
@@ -68,7 +68,7 @@ class StoredFile extends Model implements AuditableContract
 		self::MIME_WEBP,
 	];
 
-	const VIDEO_MIMES = [
+	const array VIDEO_MIMES = [
 		self::MIME_3G2,
 		self::MIME_3GP,
 		self::MIME_M4V,
@@ -92,6 +92,8 @@ class StoredFile extends Model implements AuditableContract
 		'size',
 		'exif',
 		'meta',
+		'original_stored_file_id',
+		'transcode_name',
 	];
 
 	protected $casts = [
@@ -283,7 +285,7 @@ class StoredFile extends Model implements AuditableContract
 		$meta[$key] = is_array($value) ? ArrayHelper::recursiveUpdate($meta[$key] ?? [], $value) : $value;
 
 		$this->setAttribute('meta', $meta);
-		
+
 		return $this;
 	}
 
