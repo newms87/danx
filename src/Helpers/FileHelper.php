@@ -448,6 +448,22 @@ class FileHelper
 	}
 
 	/**
+	 * Cleans a URL by removing any trailing slashes, hash fragments, and decoding URI components
+	 * The final URL will be the same URL, but in a standard format
+	 */
+	public static function normalizeUrl(string $url): string
+	{
+		// Trim and remove trailing characters
+		$url = rtrim(trim($url), '/?\\#&');
+
+		// Remove any hash fragments
+		$url = preg_replace('/#.*/', '', $url);
+
+		// decode URI components
+		return urldecode($url);
+	}
+
+	/**
 	 * Resolve an array of class names inside a directory in the App directory / namespace
 	 *
 	 * @param $dir
