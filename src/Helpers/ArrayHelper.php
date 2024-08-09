@@ -185,6 +185,7 @@ class ArrayHelper
 						break;
 					}
 					foreach($source as $key => $value) {
+						// If this is the last part of the field, extract the value
 						if (!isset($current[$key])) {
 							$current[$key] = [];
 						}
@@ -202,7 +203,8 @@ class ArrayHelper
 						}
 					}
 					break;
-				} elseif (isset($source[$part])) {
+				} elseif (array_key_exists($part, $source)) {
+					// If this is the last part of the field, extract the value
 					if ($i === count($parts) - 1) {
 						$current[$part]    = $source[$part];
 						$anyFieldExtracted = true;
