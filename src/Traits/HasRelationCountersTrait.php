@@ -6,6 +6,7 @@ use App\Models\Workflow\WorkflowRun;
 use Exception;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\MorphPivot;
 
 /**
  * @mixin Model
@@ -33,16 +34,22 @@ trait HasRelationCountersTrait
 		}
 	}
 
-	public static function syncRelatedModels(Model $model): void
+	public static function syncRelatedModels(Model $childModel): void
 	{
-		$modelCounters = (new static)->relationCounters[$model::class] ?? null;
+		$modelCounters = (new static)->relationCounters[$childModel::class] ?? null;
 
 		if (!$modelCounters) {
-			throw new Exception(static::class . " does not have any relation counters defined for " . $model::class);
+			throw new Exception(static::class . " does not have any relation counters defined for " . $childModel::class);
 		}
 
 		foreach($modelCounters as $relationshipName => $counterField) {
-			$relatedModels = static::query()->whereHas($relationshipName, fn(Builder $builder) => $builder->withTrashed()->where($model->getQualifiedKeyName(), $model->id))->get();
+			if ($childModel instanceof MorphPivot) {
+				$foreignKey    = $childModel->getForeignKey();
+				$foreignId     = $childModel->$foreignKey;
+				$relatedModels = static::query()->where('id', $foreignId)->get();
+			} else {
+				$relatedModels = static::query()->whereHas($relationshipName, fn(Builder $builder) => $builder->where($childModel->getQualifiedKeyName(), $childModel->id))->get();
+			}
 			foreach($relatedModels as $relatedModel) {
 				$relatedModel->forceFill([$counterField => $relatedModel->{$relationshipName}->count()])->save();
 			}
