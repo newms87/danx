@@ -225,46 +225,62 @@ abstract class Api
 	/**
 	 * @return HandlerStack
 	 */
-	protected function createHandler()
+	protected function createHandler(): HandlerStack
 	{
 		// This just sets up a basic logging handler to push all requests / responses onto the requestLog array
 		$callable = fn(callable $handler) => fn(
 			RequestInterface $request,
 			array            $options = []
-		) => $handler($request, $options)->then(
-			function (ResponseInterface $response) use ($request): ResponseInterface {
-				static::$requestLog[] = [
-					'request'  => $request,
-					'response' => $response,
-				];
-
-				if (config('danx.audit.api.enabled')) {
-					try {
-						$this->currentApiLog = ApiLog::logRequest(
-							static::class,
-							$this->getServiceName(),
-							$request,
-							$response
-						);
-
-						$this->fireCallbacks($this->currentApiLog);
-					} catch(Exception $exception) {
-						Log::error(
-							'Failed committing API log request entry: ' . StringHelper::logSafeString($exception->getMessage()),
-							['exception' => $exception]
-						);
-					}
-				}
-
-				return $response;
-			}
-		);
+		) => $this->handleRequest($handler, $request, $options);
 
 		// Setup Logging
-		$handler = HandlerStack::create();
-		$handler->push($callable);
+		$handlerStack = HandlerStack::create();
+		$handlerStack->push($callable);
 
-		return $handler;
+		return $handlerStack;
+	}
+
+	public function handleRequest(callable $handler, RequestInterface $request, array $options = [])
+	{
+		if (config('danx.audit.api.enabled')) {
+			try {
+				$this->currentApiLog = ApiLog::logRequest(
+					static::class,
+					$this->getServiceName(),
+					$request
+				);
+			} catch(Exception $exception) {
+				Log::error(
+					'Failed committing API log request entry: ' . StringHelper::logSafeString($exception->getMessage()),
+					['exception' => $exception]
+				);
+			}
+		}
+
+		return $handler($request, $options)->then(fn(ResponseInterface $response) => $this->handleResponse($request, $response));
+	}
+
+	public function handleResponse(RequestInterface $request, ResponseInterface $response): ResponseInterface
+	{
+		sleep(5);
+		static::$requestLog[] = [
+			'request'  => $request,
+			'response' => $response,
+		];
+
+		if (config('danx.audit.api.enabled')) {
+			try {
+				ApiLog::logResponse($this->currentApiLog, $response);
+				$this->fireCallbacks($this->currentApiLog);
+			} catch(Exception $exception) {
+				Log::error(
+					'Failed committing API log request entry: ' . StringHelper::logSafeString($exception->getMessage()),
+					['exception' => $exception]
+				);
+			}
+		}
+
+		return $response;
 	}
 
 	/**
@@ -476,7 +492,6 @@ abstract class Api
 			$body = $jsonBody;
 		}
 
-
 		$this->throttle();
 
 		$this->response = null;
@@ -527,7 +542,7 @@ abstract class Api
 	 * @throws ApiRequestException
 	 * @throws GuzzleException
 	 */
-	public function get(string $endpoint, array $query = [], string|array $data = [], array $options = []): static
+	public function get(string $endpoint, array $query = [], string|array $data = '', array $options = []): static
 	{
 		return $this->queryParams($query)->call(self::METHOD_GET, $endpoint, $data, $options);
 	}

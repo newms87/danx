@@ -2,12 +2,11 @@
 
 namespace Newms87\Danx\Models\Audit;
 
-use Exception;
-use Newms87\Danx\Audit\AuditDriver;
-use Newms87\Danx\Helpers\StringHelper;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Newms87\Danx\Audit\AuditDriver;
+use Newms87\Danx\Helpers\StringHelper;
 use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
 
@@ -35,23 +34,14 @@ class ApiLog extends Model
 	];
 
 	/**
-	 * @param                        $apiClass
-	 * @param                        $serviceName
-	 * @param RequestInterface       $request
-	 * @param ResponseInterface|null $response
-	 * @return ApiLog|Model
-	 *
-	 * @throws Exception
+	 * Adds an API log entry to the database.
 	 */
 	public static function logRequest(
 		$apiClass,
 		$serviceName,
-		RequestInterface $request,
-		ResponseInterface $response = null
-	)
+		RequestInterface $request
+	): ApiLog
 	{
-		$statusCode = $response ? $response->getStatusCode() : 0;
-
 		$apiLog = ApiLog::create([
 			'audit_request_id' => AuditDriver::getAuditRequest()?->id,
 			'user_id'          => user()?->id,
@@ -59,18 +49,33 @@ class ApiLog extends Model
 			'service_name'     => $serviceName,
 			'url'              => substr($request->getUri(), 0, 512),
 			'full_url'         => $request->getUri(),
-			'status_code'      => $statusCode,
+			'status_code'      => 0,
 			'method'           => $request->getMethod(),
 			'request'          => static::parseBody($request),
 			'request_headers'  => $request->getHeaders(),
-			'response'         => static::parseBody($response),
-			'response_headers' => $response?->getHeaders(),
-			'stack_trace'      => $statusCode >= 400 ? debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS) : null,
 		]);
 
 		$request->getBody()->rewind();
 
-		$response?->getBody()->rewind();
+		return $apiLog;
+	}
+
+	/**
+	 * Adds an API response to an existing ApiLog entry in the database.
+	 */
+	public static function logResponse(
+		ApiLog            $apiLog,
+		ResponseInterface $response
+	): ApiLog
+	{
+		$apiLog->update([
+			'status_code'      => $response->getStatusCode(),
+			'response'         => static::parseBody($response),
+			'response_headers' => $response->getHeaders(),
+			'stack_trace'      => $response->getStatusCode() >= 400 ? debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS) : null,
+		]);
+
+		$response->getBody()->rewind();
 
 		return $apiLog;
 	}
