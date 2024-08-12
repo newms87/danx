@@ -31,6 +31,23 @@ class ArrayHelper
 	}
 
 	/**
+	 * Maps an array using a callback, and recursively maps any nested arrays
+	 */
+	public static function recursiveMap(array $array, callable $callback): array
+	{
+		$result = [];
+		foreach($array as $key => $value) {
+			if (is_array($value)) {
+				$result[$key] = self::recursiveMap($value, $callback);
+			} else {
+				$result[$key] = $callback($value, $key);
+			}
+		}
+
+		return $result;
+	}
+
+	/**
 	 * @param      $array1
 	 * @param      $array2
 	 * @param bool $ignoreMissingKeys
@@ -325,7 +342,7 @@ class ArrayHelper
 		if (is_array($current)) {
 			if (is_array($value)) {
 				// If the value is non-associative, filter out any items that do not match the value object structure
-				if (!is_associative_array($current)) {
+				if (!is_associative_array($current) && is_associative_array($value)) {
 					$current = array_values(array_filter($current, fn($currentItem) => static::filterNestedData($currentItem, '', $value) !== null));
 
 					return $current ? $data : null;
