@@ -2,10 +2,14 @@
 
 namespace Newms87\Danx\Helpers;
 
+use DOMDocument;
+use DOMXPath;
+use Exception;
 use Illuminate\Contracts\Filesystem\FileNotFoundException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\File as FileFacade;
 use Illuminate\Support\Str;
+use League\HTMLToMarkdown\HtmlConverter;
 use Newms87\Danx\Library\CsvExport;
 use Newms87\Danx\Models\Utilities\StoredFile as FileModel;
 use Symfony\Component\Mime\MimeTypes;
@@ -366,6 +370,135 @@ class FileHelper
 		} else {
 			return $part1;
 		}
+	}
+
+	public static function fetchUrlContent($url): string|null
+	{
+		$ch = curl_init();
+		curl_setopt_array($ch, [
+			CURLOPT_URL            => $url,
+			CURLOPT_RETURNTRANSFER => true,
+			CURLOPT_FOLLOWLOCATION => true,
+			CURLOPT_SSL_VERIFYPEER => false,
+			CURLOPT_HTTPHEADER     => [
+				'accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+				'accept-language: en-US,en;q=0.9,la;q=0.8',
+				'cache-control: max-age=0',
+				'if-modified-since: Fri, 16 Feb 1990 21:13:37 GMT',
+				'priority: u=0, i',
+				'sec-ch-ua: "Not)A;Brand";v="99", "Google Chrome";v="127", "Chromium";v="127"',
+				'sec-ch-ua-mobile: ?0',
+				'sec-ch-ua-platform: "Linux"',
+				'sec-fetch-dest: document',
+				'sec-fetch-mode: navigate',
+				'sec-fetch-site: none',
+				'sec-fetch-user: ?1',
+				'upgrade-insecure-requests: 1',
+			],
+			CURLOPT_USERAGENT      => 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
+			CURLOPT_ENCODING       => '',
+		]);
+
+		$response = curl_exec($ch);
+
+		if (curl_errno($ch)) {
+			throw new Exception(curl_error($ch));
+		}
+
+		$statusCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+
+		curl_close($ch);
+
+		if ($statusCode !== 200) {
+			throw new Exception("HTTP request failed. Status code: $statusCode");
+		}
+
+		return $response;
+	}
+
+	public static function cleanHtmlContent($html, $elementsToRemove = ['svg', 'style', 'head', 'script', 'img', 'video', 'audio', 'iframe', 'object', 'embed', 'source', 'track', 'canvas', 'map', 'area', 'base', 'link', 'meta', 'param']): string
+	{
+		$html = preg_replace("#ix:header.*?ix:header#s", '', $html);
+
+		// Create a new DOMDocument
+		$dom = new DOMDocument();
+
+		// Suppress warnings for malformed HTML
+		libxml_use_internal_errors(true);
+		$dom->loadHTML($html, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+		libxml_clear_errors();
+
+		// Create a DOMXPath object
+		$xpath = new DOMXPath($dom);
+
+		// Remove each specified element
+		foreach($elementsToRemove as $element) {
+			$nodes = $xpath->query("//{$element}");
+			if ($nodes) {
+				foreach($nodes as $node) {
+					$node->parentNode->removeChild($node);
+				}
+			}
+		}
+
+		// Get the cleaned HTML
+		return $dom->saveHTML();
+	}
+
+	public static function htmlToText($html)
+	{
+		// Create a new DOMDocument
+		$dom = new DOMDocument();
+
+		// Suppress warnings for malformed HTML
+		libxml_use_internal_errors(true);
+		$dom->loadHTML(mb_convert_encoding($html, 'HTML-ENTITIES', 'UTF-8'), LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+		libxml_clear_errors();
+
+		// Create a DOMXPath object
+		$xpath = new DOMXPath($dom);
+
+		// Function to process each node
+		function processNode($node)
+		{
+			$text = '';
+			if ($node->nodeType === XML_TEXT_NODE) {
+				$text = $node->textContent;
+			} elseif ($node->nodeType === XML_ELEMENT_NODE) {
+				foreach($node->childNodes as $childNode) {
+					$text .= processNode($childNode);
+				}
+
+				// Add newlines for block-level elements
+				$blockElements = ['p', 'div', 'br', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li'];
+				if (in_array(strtolower($node->nodeName), $blockElements)) {
+					$text = "\n" . trim($text) . "\n";
+				}
+			}
+
+			return $text;
+		}
+
+		// Process the body
+		$body = $xpath->query('//body')->item(0);
+		$text = $body ? processNode($body) : '';
+
+		// Clean up the text
+		$text = preg_replace('/\n{3,}/', "\n\n", $text); // Replace multiple newlines with double newlines
+		$text = preg_replace('/[ \t]+/', ' ', $text);    // Replace multiple spaces with single spaces
+		$text = trim($text);                             // Trim leading and trailing whitespace
+
+		return $text;
+	}
+
+	public static function htmlToMarkdown($url): ?string
+	{
+		$html = FileHelper::fetchUrlContent($url);
+		$html = FileHelper::cleanHtmlContent($html);
+
+		$markdown = (new HtmlConverter())->convert($html);
+
+		return FileHelper::htmlToText($markdown);
 	}
 
 	/**
