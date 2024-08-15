@@ -23,10 +23,7 @@ class FileRepository
 	const array DISPLAY_IMAGE_MIMES   = ['png', 'jpeg', 'jpg', 'gif'];
 	const array DEFAULT_ALLOWED_MIMES = ['pdf', 'jpeg', 'jpg', 'png'];
 
-	/**
-	 * Creates a File resource with the given contents and options
-	 */
-	public function createFileWithContents(string $filepath, string $contents, array $options = []): StoredFile
+	public function createFileWithUrl(string $filepath, string $url, array $options = []): StoredFile
 	{
 		$disk = $options['disk'] ?? config('filesystems.default');
 
@@ -38,15 +35,38 @@ class FileRepository
 			'disk'     => $disk,
 			'filepath' => $filepath,
 			'filename' => basename($filepath),
-			'size'     => strlen($contents),
-			'url'      => Storage::disk($disk)->url($filepath),
+			'size'     => 0,
+			'url'      => $url,
 		];
 
-		$file = StoredFile::create($options);
+		if (strlen($options['filename']) > 255) {
+			// Intelligently auto trim filename down to 255 characters to avoid database errors
+			$extension           = pathinfo($options['filename'], PATHINFO_EXTENSION);
+			$name                = pathinfo($options['filename'], PATHINFO_FILENAME);
+			$options['filename'] = StringHelper::limitText(255, $name, $extension);
+		}
+
+		if (strlen($options['filepath']) > 768) {
+			// Intelligently auto trim filepath down to 768 characters to avoid database errors
+			$path                = pathinfo($options['filepath'], PATHINFO_DIRNAME);
+			$options['filepath'] = StringHelper::limitText(768, $path, $options['filename']);
+		}
+
+		return StoredFile::create($options);
+	}
+
+	/**
+	 * Creates a File resource with the given contents and options
+	 */
+	public function createFileWithContents(string $filepath, string $contents, array $options = []): StoredFile
+	{
+		$disk = $options['disk'] ?? config('filesystems.default');
 
 		$this->storeOnDisk($filepath, $contents, $disk);
+		$url             = Storage::disk($disk)->url($filepath);
+		$options['size'] = strlen($contents);
 
-		return $file;
+		return $this->createFileWithUrl($filepath, $url, $options);
 	}
 
 	/**
