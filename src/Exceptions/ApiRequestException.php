@@ -5,6 +5,7 @@ namespace Newms87\Danx\Exceptions;
 use Newms87\Danx\Api\Api;
 use Newms87\Danx\Helpers\StringHelper;
 use GuzzleHttp\Exception\RequestException;
+use Psr\Http\Message\ResponseInterface;
 use Throwable;
 
 class ApiRequestException extends \Exception
@@ -27,6 +28,8 @@ class ApiRequestException extends \Exception
 	/** @var array $requestJson The associative array representing the JSON formatted contents of the request body (null if not JSON format) */
 	protected $requestJson;
 
+    protected ResponseInterface $response;
+
 	public function __construct(
 		$apiName,
 		RequestException $exception,
@@ -39,6 +42,7 @@ class ApiRequestException extends \Exception
 		if ($response) {
 			$this->contents = (string)$response->getBody();
 			$this->json     = StringHelper::parseJson($this->contents);
+            $this->response = $response;
 
 			$response->getBody()->rewind();
 		}
@@ -53,6 +57,11 @@ class ApiRequestException extends \Exception
 
 		parent::__construct($message, $exception->getCode(), $exception);
 	}
+
+    public function getStatusCode(): int
+    {
+        return $this->response?->getStatusCode() ?? 0;
+    }
 
 	/**
 	 * @return string The implementing API name
