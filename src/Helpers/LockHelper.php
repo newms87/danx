@@ -2,15 +2,19 @@
 
 namespace Newms87\Danx\Helpers;
 
-use Exception;
-use Newms87\Danx\Exceptions\LockException;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use Newms87\Danx\Exceptions\LockException;
 use Throwable;
 
 class LockHelper
 {
+	// Locks are only important to lock out other requests from modifying the same resource
+	// We can keep track of the locks we have acquired in memory
+	// This way we don't block ourselves if we try to acquire the same lock twice
+	static array $acquiredLocks = [];
+
 	// Only lock a resource for 30 seconds by default
 	const TTL = 30;
 
@@ -27,10 +31,16 @@ class LockHelper
 	 *
 	 * @throws Throwable
 	 */
-	public static function acquire(Model|string $key, int $waitTime = LockHelper::WAIT_TIME, int $ttl = LockHelper::TTL)
+	public static function acquire(Model|string $key, int $waitTime = LockHelper::WAIT_TIME, int $ttl = LockHelper::TTL): bool
 	{
 		$model = $key instanceof Model ? $key : null;
 		$key   = self::resolveKey($key);
+
+		if (!empty(static::$acquiredLocks[$key])) {
+			Log::debug("🔴🔒 LOCK ALREADY ACQUIRED: $key");
+
+			return true;
+		}
 
 		$lock = Cache::lock($key, $ttl);
 
@@ -40,28 +50,47 @@ class LockHelper
 			// If we did not get the lock on the first attempt, block until we get the lock
 			if (!$firstLock) {
 				Log::debug("🟡🔒 WAIT: $key");
+				$blockAt = microtime(true);
 				$lock->block($waitTime);
+
+				if (microtime(true) - $blockAt >= $waitTime) {
+					Log::error("🔴🔒 TIMEOUT: $key");
+				}
 			}
 
+			static::$acquiredLocks[$key] = true;
 			Log::debug("🔴🔒 ACQUIRED: $key");
 
 			// Always refresh the model, so we can guarantee we have the latest data after acquiring the lock
 			$model?->refresh();
-		} catch(Exception $exception) {
+		} catch(Throwable $exception) {
 			throw new LockException($key, $exception);
 		}
+
+		return true;
 	}
 
 	/**
-	 * @param $key
-	 * @param $ttl
-	 * @return mixed
+	 * Get a lock on a key
 	 */
 	public static function get($key, $ttl = LockHelper::TTL)
 	{
 		$key = self::resolveKey($key);
 
-		return Cache::lock($key, $ttl)->get();
+		if (!empty(static::$acquiredLocks[$key])) {
+			Log::debug("🔴🔒 LOCK ALREADY ACQUIRED: $key");
+
+			return true;
+		}
+
+		$isAcquired = Cache::lock($key, $ttl)->get();
+
+		if ($isAcquired) {
+			static::$acquiredLocks[$key] = true;
+			Log::debug("🔴🔒 ACQUIRED: $key");
+		}
+
+		return $isAcquired;
 	}
 
 	/**
@@ -70,6 +99,13 @@ class LockHelper
 	public static function release($key)
 	{
 		$key = self::resolveKey($key);
+
+		if (empty(static::$acquiredLocks[$key])) {
+			Log::debug("🟢🔒 LOCK ALREADY RELEASED: $key");
+
+			return;
+		}
+
 		Cache::lock($key)->forceRelease();
 		Log::debug("🟢🔒 RELEASED: $key");
 	}
