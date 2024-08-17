@@ -4,6 +4,7 @@ namespace Newms87\Danx\Audit;
 
 use Exception;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
@@ -83,14 +84,20 @@ class AuditDriver implements AuditDriverContract
 		$auditRequest = self::getAuditRequestOrIgnore();
 
 		if ($auditRequest) {
-			$auditRequest?->update([
+			$auditRequest->update([
 				'time'     => microtime(true) - self::$startTime,
 				'response' => $response ? self::getResponse($response) : null,
 			]);
-		}
 
-		if ($response instanceof Response) {
-			$response->header('X-Audit-Request-Id', $auditRequest?->id);
+			if ($response instanceof Response || $response instanceof JsonResponse) {
+				$response->header('X-Audit-Request-Id', $auditRequest->id);
+				$response->header('X-Audit-Request-Url', app_url("/audit-requests/$auditRequest->id/request"));
+
+				$errorsCount = $auditRequest->errorLogEntries()->count();
+				if ($errorsCount > 0) {
+					$response->header('X-Audit-Error-Log-Count', $errorsCount);
+				}
+			}
 		}
 
 		return $response;

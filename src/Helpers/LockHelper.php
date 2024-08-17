@@ -107,6 +107,7 @@ class LockHelper
 		}
 
 		Cache::lock($key)->forceRelease();
+		static::$acquiredLocks[$key] = false;
 		Log::debug("🟢🔒 RELEASED: $key");
 	}
 

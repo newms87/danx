@@ -47,6 +47,8 @@ function app_path($path = ''): string { }
 
 function config_path($path = ''): string { }
 
+function redirect($to = null, $status = 302, $headers = [], $secure = null): Response { }
+
 function now(): Carbon { }
 
 function route($name, $parameters = [], $absolute = true): string

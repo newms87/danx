@@ -23,6 +23,8 @@ class ActionRoute extends Route
 
 		return static::prefix($prefix)->withoutMiddleware([VerifyCsrfToken::class])->group(function () use ($name, $controller) {
 			$getPost = ['GET', 'HEAD', 'POST'];
+			self::get('{id}/edit', fn($model) => redirect(app_url("$name/$model->id/edit"), ''))->name($name . '.edit');
+
 			// GET Data - NOTE: POST is included since filters can be too long for URLs in some browsers
 			self::addRoute($getPost, 'list', [$controller::class, 'list'])->name($name . '.list');
 			self::addRoute($getPost, 'summary', [$controller::class, 'summary'])->name($name . '.summary');
