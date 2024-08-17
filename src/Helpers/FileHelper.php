@@ -458,35 +458,38 @@ class FileHelper
 		// Create a DOMXPath object
 		$xpath = new DOMXPath($dom);
 
-		// Function to process each node
-		function processNode($node)
-		{
-			$text = '';
-			if ($node->nodeType === XML_TEXT_NODE) {
-				$text = $node->textContent;
-			} elseif ($node->nodeType === XML_ELEMENT_NODE) {
-				foreach($node->childNodes as $childNode) {
-					$text .= processNode($childNode);
-				}
-
-				// Add newlines for block-level elements
-				$blockElements = ['p', 'div', 'br', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li'];
-				if (in_array(strtolower($node->nodeName), $blockElements)) {
-					$text = "\n" . trim($text) . "\n";
-				}
-			}
-
-			return $text;
-		}
 
 		// Process the body
 		$body = $xpath->query('//body')->item(0);
-		$text = $body ? processNode($body) : '';
+		$text = $body ? FileHelper::processDomNode($body) : '';
 
 		// Clean up the text
 		$text = preg_replace('/\n{3,}/', "\n\n", $text); // Replace multiple newlines with double newlines
 		$text = preg_replace('/[ \t]+/', ' ', $text);    // Replace multiple spaces with single spaces
 		$text = trim($text);                             // Trim leading and trailing whitespace
+
+		return $text;
+	}
+
+	/**
+	 * Recursively process a DOMNode and return the text content
+	 */
+	private static function processDomNode($node)
+	{
+		$text = '';
+		if ($node->nodeType === XML_TEXT_NODE) {
+			$text = $node->textContent;
+		} elseif ($node->nodeType === XML_ELEMENT_NODE) {
+			foreach($node->childNodes as $childNode) {
+				$text .= FileHelper::processDomNode($childNode);
+			}
+
+			// Add newlines for block-level elements
+			$blockElements = ['p', 'div', 'br', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li'];
+			if (in_array(strtolower($node->nodeName), $blockElements)) {
+				$text = "\n" . trim($text) . "\n";
+			}
+		}
 
 		return $text;
 	}
