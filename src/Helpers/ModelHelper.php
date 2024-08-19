@@ -21,7 +21,6 @@ class ModelHelper
 		do {
 			$count++;
 			$newName = "$baseName ($count)";
-			dump("checked", $model::query()->where($fieldName, $newName)->toSql(), $model::query()->where($fieldName, $newName)->getBindings());
 		} while($model::query()->where($fieldName, $newName)->exists());
 
 		return $newName;
