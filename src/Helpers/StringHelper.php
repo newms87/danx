@@ -136,13 +136,13 @@ class StringHelper
 	 * @param int $maxEntrySize
 	 * @return array|mixed|null
 	 */
-	public static function safeJsonDecode($string, int $maxEntrySize = 10000)
+	public static function safeJsonDecode($string, int $maxEntrySize = 10000, bool $forceJson = true)
 	{
 		if ($string) {
 			$string  = static::safeConvertToUTF8($string);
 			$jsonObj = json_decode($string, true);
 
-			if (!$jsonObj) {
+			if (!$jsonObj && $forceJson) {
 				$jsonObj = ['content' => $string];
 
 				try {
@@ -251,7 +251,7 @@ class StringHelper
 		if (!$prefix && !$suffix) {
 			return '';
 		}
-		
+
 		if ($minPrefixLength > $limit) {
 			throw new Exception('minPrefixLength cannot be greater than limit');
 		}
