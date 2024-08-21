@@ -467,6 +467,7 @@ class FileHelper
 		$text = preg_replace('/\n{3,}/', "\n\n", $text); // Replace multiple newlines with double newlines
 		$text = preg_replace('/[ \t]+/', ' ', $text);    // Replace multiple spaces with single spaces
 		$text = trim($text);                             // Trim leading and trailing whitespace
+		$text = StringHelper::safeConvertToUTF8($text);  // Convert to UTF-8
 
 		return $text;
 	}
