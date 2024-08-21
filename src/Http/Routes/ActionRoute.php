@@ -14,14 +14,15 @@ class ActionRoute extends Route
 	/**
 	 * @param string           $name
 	 * @param ActionController $controller The class name of a controller extending ActionController
+	 * @param null             $extend     A closure to add custom routes
 	 * @return RouteRegistrar
 	 */
-	public static function routes(string $name, ActionController $controller): RouteRegistrar
+	public static function routes(string $name, ActionController $controller, $extend = null): RouteRegistrar
 	{
 		// Strict naming / prefixing rules to ensure consistency
 		$prefix = str_replace('.', '/', $name);
 
-		return static::prefix($prefix)->withoutMiddleware([VerifyCsrfToken::class])->group(function () use ($name, $controller) {
+		return static::prefix($prefix)->withoutMiddleware([VerifyCsrfToken::class])->group(function () use ($name, $controller, $extend) {
 			$getPost = ['GET', 'HEAD', 'POST'];
 			self::get('{id}/edit', fn($model) => redirect(app_url("$name/$model->id/edit"), ''))->name($name . '.edit');
 
@@ -36,6 +37,11 @@ class ActionRoute extends Route
 			// Actions
 			self::post('{id}/apply-action', fn($model, PagerRequest $request) => $controller->applyAction($controller->repo()->instance($model), $request))->name($name . '.apply-action');
 			self::post('batch-action', [$controller::class, 'batchAction'])->name($name . '.batch-action');
+
+			// Custom routes
+			if ($extend) {
+				$extend();
+			}
 		});
 	}
 }
