@@ -132,15 +132,21 @@ class StringHelper
 	}
 
 	/**
-	 * @param     $string
-	 * @param int $maxEntrySize
-	 * @return array|mixed|null
+	 * Safely decodes a JSON string and limits the length of each entry in the array
 	 */
 	public static function safeJsonDecode($string, int $maxEntrySize = 10000, bool $forceJson = true)
 	{
-		if ($string) {
-			$string  = static::safeConvertToUTF8($string);
-			$jsonObj = json_decode($string, true);
+		if (!$string) {
+			return null;
+		}
+
+		$jsonObj = null;
+
+		if (is_scalar($string)) {
+			if (is_string($string)) {
+				$string  = static::safeConvertToUTF8($string);
+				$jsonObj = json_decode($string, true);
+			}
 
 			if (!$jsonObj && $forceJson) {
 				$jsonObj = ['content' => $string];
@@ -154,21 +160,16 @@ class StringHelper
 					];
 				}
 			}
-
-			if (is_array($jsonObj)) {
-				self::limitArrayEntryLength($jsonObj, $maxEntrySize);
-			}
-
-			return $jsonObj;
+		} elseif (is_array($string)) {
+			$jsonObj = $string;
+			self::limitArrayEntryLength($jsonObj, $maxEntrySize);
 		}
 
-		// If no string contents are given, just return null
-		return null;
+		return $jsonObj;
 	}
 
 	/**
-	 * @param $result
-	 * @return mixed|null
+	 * Parse a string for a JSON object
 	 */
 	public static function getJsonFromText($message)
 	{
