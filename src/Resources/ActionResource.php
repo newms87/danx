@@ -17,7 +17,7 @@ abstract class ActionResource
 		return [
 			'id'          => $model->getKey(),
 			'__type'      => $type,
-			'__timestamp' => request()->header('X-Timestamp') ?: LARAVEL_START,
+			'__timestamp' => request()->header('X-Timestamp') ?: microtime(true),
 		];
 	}
 
