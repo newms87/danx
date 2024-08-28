@@ -411,6 +411,9 @@ class ArrayHelper
 		$current = $value;
 	}
 
+	/**
+	 * returns a flat array of all fields and nested fields expressed as dot notation
+	 */
 	public static function getNestedFieldList($object, $prefix = ''): array
 	{
 		if (empty($object)) {
