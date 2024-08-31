@@ -2,7 +2,6 @@
 
 namespace Newms87\Danx\Traits;
 
-use App\Models\Workflow\WorkflowRun;
 use Exception;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -28,13 +27,15 @@ trait HasRelationCountersTrait
 				static::syncRelatedModels($model);
 			});
 
-			$relatedModelClass::deleted(function (Model $model) {
-				static::syncRelatedModels($model);
+			// Track deletes before they happen in the database because we need to first look up the related models
+			// before the association is removed
+			$relatedModelClass::deleting(function (Model $model) {
+				static::syncRelatedModels($model, true);
 			});
 		}
 	}
 
-	public static function syncRelatedModels(Model $childModel): void
+	public static function syncRelatedModels(Model $childModel, $isDelete = false): void
 	{
 		$modelCounters = (new static)->relationCounters[$childModel::class] ?? null;
 
@@ -51,7 +52,12 @@ trait HasRelationCountersTrait
 				$relatedModels = static::query()->whereHas($relationshipName, fn(Builder $builder) => $builder->where($childModel->getQualifiedKeyName(), $childModel->id))->get();
 			}
 			foreach($relatedModels as $relatedModel) {
-				$relatedModel->forceFill([$counterField => $relatedModel->{$relationshipName}->count()])->save();
+				$query = $relatedModel->{$relationshipName}();
+				// We have to exclude the current model from the count if it's being deleted since we are tracking this before the delete actually happens
+				if ($isDelete) {
+					$query->where($childModel->getKeyName(), '!=', $childModel->getKey());
+				}
+				$relatedModel->forceFill([$counterField => $query->count()])->save();
 			}
 		}
 	}
