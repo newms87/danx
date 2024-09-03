@@ -47,7 +47,7 @@ trait HasRelationCountersTrait
 			if ($childModel instanceof MorphPivot) {
 				$foreignKey    = $childModel->getForeignKey();
 				$foreignId     = $childModel->$foreignKey;
-				$relatedModels = static::query()->where('id', $foreignId)->get();
+				$relatedModels = static::query()->where($foreignKey, $foreignId)->get();
 			} else {
 				$relatedModels = static::query()->whereHas($relationshipName, fn(Builder $builder) => $builder->where($childModel->getQualifiedKeyName(), $childModel->id))->get();
 			}
@@ -55,7 +55,7 @@ trait HasRelationCountersTrait
 				$query = $relatedModel->{$relationshipName}();
 				// We have to exclude the current model from the count if it's being deleted since we are tracking this before the delete actually happens
 				if ($isDelete) {
-					$query->where($childModel->getKeyName(), '!=', $childModel->getKey());
+					$query->where($childModel->getQualifiedKeyName(), '!=', $childModel->getKey());
 				}
 				$relatedModel->forceFill([$counterField => $query->count()])->save();
 			}
