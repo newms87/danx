@@ -17,6 +17,7 @@ class JobDispatch extends Model
 		STATUS_RUNNING = 'Running',
 		STATUS_COMPLETE = 'Complete',
 		STATUS_EXCEPTION = 'Exception',
+		STATUS_ABORTED = 'Aborted',
 		STATUS_FAILED = 'Failed',
 		STATUS_TIMEOUT = 'Timeout';
 

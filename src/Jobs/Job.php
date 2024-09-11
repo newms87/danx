@@ -70,46 +70,44 @@ abstract class Job implements ShouldQueue
 		$ref  = $this->ref();
 		$name = class_basename(static::class);
 
-		// If we cannot immediately acquire the lock, that means someone else is already doing what we're trying to do
-		// This will be released when the job is just about to execute, we are debouncing all other redundant requests
-		if (!LockHelper::get($ref, 60)) {
-			Log::debug("Job $ref is already running");
+		LockHelper::acquire('resolve-' . $ref);
 
-			return;
-		}
-
-		$jobDispatch = JobDispatch::firstOrNew([
-			'ref'    => $ref,
-			'status' => JobDispatch::STATUS_PENDING,
-		]);
-
-		if ($jobDispatch->isTimedOut()) {
-			$jobDispatch->update(['status' => JobDispatch::STATUS_TIMEOUT]);
-
-			$jobDispatch = JobDispatch::make([
+		try {
+			$jobDispatch = JobDispatch::firstOrNew([
 				'ref'    => $ref,
 				'status' => JobDispatch::STATUS_PENDING,
 			]);
-		}
 
-		if (!$jobDispatch->exists) {
-			$jobDispatch->forceFill([
-				'user_id'    => user()?->id ?: null,
-				'name'       => $name,
-				'count'      => 1,
-				'timeout_at' => $this->getTimeoutAt(),
-			])->save();
-		}
+			if ($jobDispatch->isTimedOut()) {
+				$jobDispatch->update(['status' => JobDispatch::STATUS_TIMEOUT]);
 
-		if (config('danx.audit.enabled')) {
-			$jobDispatch->update(['dispatch_audit_request_id' => AuditDriver::getAuditRequest()?->id]);
-		}
+				$jobDispatch = JobDispatch::make([
+					'ref'    => $ref,
+					'status' => JobDispatch::STATUS_PENDING,
+				]);
+			}
 
-		if (config('queue.debug')) {
-			Log::debug("Created $jobDispatch");
-		}
+			if (!$jobDispatch->exists) {
+				$jobDispatch->forceFill([
+					'user_id'    => user()?->id ?: null,
+					'name'       => $name,
+					'count'      => 1,
+					'timeout_at' => $this->getTimeoutAt(),
+				])->save();
+			}
 
-		$this->jobDispatch = $jobDispatch;
+			if (config('danx.audit.enabled')) {
+				$jobDispatch->update(['dispatch_audit_request_id' => AuditDriver::getAuditRequest()?->id]);
+			}
+
+			if (config('queue.debug')) {
+				Log::debug("Created $jobDispatch");
+			}
+
+			$this->jobDispatch = $jobDispatch;
+		} finally {
+			LockHelper::release('resolve-' . $ref);
+		}
 	}
 
 	/**
@@ -143,6 +141,15 @@ abstract class Job implements ShouldQueue
 
 		// If the Job was recently created, then it is the first time it has been dispatched
 		if ($this->jobDispatch->wasRecentlyCreated) {
+			// If we cannot immediately acquire the lock, that means someone else is already doing what we're trying to do
+			// This will be released when the job is just about to execute, we are debouncing all other redundant requests
+			if (!LockHelper::get($this->jobDispatch->ref, 30)) {
+				Log::debug("Job {$this->jobDispatch->ref} is already running");
+				$this->jobDispatch->update(['status' => JobDispatch::STATUS_ABORTED]);
+
+				return $this;
+			}
+
 			$dispatcher = app(Dispatcher::class);
 
 			// If this job is not supposed to be added to the Job Queue, then we want to dispatch it immediately
