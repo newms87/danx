@@ -38,6 +38,8 @@ class LockHelper
 
 		if (!empty(static::$acquiredLocks[$key])) {
 			Log::debug("🔴🔒 LOCK ALREADY ACQUIRED: $key");
+			// Always refresh the model, so we can guarantee we have the latest data after acquiring the lock
+			$model?->refresh();
 
 			return true;
 		}
@@ -98,14 +100,8 @@ class LockHelper
 	 */
 	public static function release($key)
 	{
+		// IMPORTANT: Always set the lock to false after releasing it even if not in locally acquired locks in case of async processes acquiring and releasing the lock
 		$key = self::resolveKey($key);
-
-		if (empty(static::$acquiredLocks[$key])) {
-			Log::debug("🟢🔒 LOCK ALREADY RELEASED: $key");
-
-			return;
-		}
-
 		Cache::lock($key)->forceRelease();
 		static::$acquiredLocks[$key] = false;
 		Log::debug("🟢🔒 RELEASED: $key");

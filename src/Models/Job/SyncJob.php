@@ -4,12 +4,13 @@ namespace Newms87\Danx\Models\Job;
 
 use Closure;
 use Exception;
-use Newms87\Danx\Helpers\LockHelper;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Facades\Log;
 use Laravel\SerializableClosure\Exceptions\PhpVersionNotSupportedException;
 use Laravel\SerializableClosure\SerializableClosure;
+use Newms87\Danx\Helpers\LockHelper;
+use Newms87\Danx\Jobs\Job;
 use Throwable;
 
 class SyncJob extends Model
@@ -101,6 +102,17 @@ class SyncJob extends Model
 
 			try {
 				LockHelper::acquire($this);
+
+				if (Job::$runningJob) {
+					$this->job_dispatch_id = Job::$runningJob->id;
+				}
+
+				if (!$this->dirty_at || $this->synced_at) {
+					$this->dirty_at  = now();
+					$this->synced_at = null;
+				}
+
+				$this->save();
 
 				$instance = $this->getModelInstance();
 
