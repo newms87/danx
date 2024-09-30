@@ -70,7 +70,14 @@ abstract class Job implements ShouldQueue
 		$ref  = $this->ref();
 		$name = class_basename(static::class);
 
-		LockHelper::acquire('resolve-' . $ref);
+		try {
+			LockHelper::acquire('resolve-' . $ref);
+		} catch(Throwable $exception) {
+			Log::debug("Lock acquisition skipped: Job was recently triggered: $ref");
+			$this->jobDispatch = JobDispatch::where('ref', $ref)->orderByDesc('id')->first();
+
+			return;
+		}
 
 		try {
 			$jobDispatch = JobDispatch::firstOrNew([
