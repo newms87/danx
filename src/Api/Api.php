@@ -409,6 +409,9 @@ abstract class Api
 			$responseBody = '';
 		}
 
+		$requestBody  = StringHelper::limitText(10000, StringHelper::safeConvertToUTF8($requestBody));
+		$responseBody = StringHelper::limitText(10000, StringHelper::safeConvertToUTF8($responseBody));
+
 		return "$method $statusCode $uri\n" .
 			"$headers\n\n" .
 			($message ? $message . "\n\n" : '') .
