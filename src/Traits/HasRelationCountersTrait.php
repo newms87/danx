@@ -5,7 +5,9 @@ namespace Newms87\Danx\Traits;
 use Exception;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Database\Eloquent\Relations\MorphPivot;
+use Illuminate\Database\Eloquent\Relations\MorphToMany;
 
 /**
  * @mixin Model
@@ -37,6 +39,7 @@ trait HasRelationCountersTrait
 
 	public static function syncRelatedModels(Model $childModel, $isDelete = false): void
 	{
+		// Resolve the relationship counters based on the child model's class
 		$modelCounters = (new static)->relationCounters[$childModel::class] ?? null;
 
 		if (!$modelCounters) {
@@ -44,21 +47,37 @@ trait HasRelationCountersTrait
 		}
 
 		foreach($modelCounters as $relationshipName => $counterField) {
-			if ($childModel instanceof MorphPivot) {
-				$foreignKey    = $childModel->getForeignKey();
-				$foreignId     = $childModel->$foreignKey;
-				$relatedModels = static::query()->where($foreignKey, $foreignId)->get();
-			} else {
-				$relatedModels = static::query()->whereHas($relationshipName, fn(Builder $builder) => $builder->where($childModel->getQualifiedKeyName(), $childModel->id))->get();
-			}
-			foreach($relatedModels as $relatedModel) {
-				$query = $relatedModel->{$relationshipName}();
+			// First query the parent models that depend on the child that was modified
+			$parentModels = static::resolveRelationCountersParentModels($relationshipName, $childModel);
+
+			// Then loop through each parent and sync the count of the number of all child models with the same relationship as the given child model
+			foreach($parentModels as $parentModel) {
+				$query = $parentModel->{$relationshipName}();
 				// We have to exclude the current model from the count if it's being deleted since we are tracking this before the delete actually happens
 				if ($isDelete) {
 					$query->where($childModel->getQualifiedKeyName(), '!=', $childModel->getKey());
 				}
-				$relatedModel->forceFill([$counterField => $query->count()])->save();
+				$parentModel->forceFill([$counterField => $query->count()])->save();
 			}
 		}
+	}
+
+	public static function resolveRelationCountersParentModels($relationshipName, Model $childModel)
+	{
+		$relationshipMethod = (new static)->$relationshipName();
+
+		if ($relationshipMethod instanceof MorphToMany) {
+			throw new Exception("Not yet implemented relationship MorphToMany for " . static::class);
+		}
+
+		if ($relationshipMethod instanceof MorphMany || !($childModel instanceof MorphPivot)) {
+			return static::query()->whereHas($relationshipName, fn(Builder $builder) => $builder->where($childModel->getQualifiedKeyName(), $childModel->id))->get();
+		}
+
+		// Assume the child model is a pivot table
+		$foreignKey = $childModel->getForeignKey();
+		$foreignId  = $childModel->$foreignKey;
+
+		return static::query()->where($foreignKey, $foreignId)->get();
 	}
 }
