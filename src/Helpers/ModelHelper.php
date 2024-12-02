@@ -17,11 +17,12 @@ class ModelHelper
 	{
 		$count    = 0;
 		$baseName = trim(preg_replace("/\\(\\d+\\)$/", '', trim($model->{$fieldName})));
+		$newName  = $baseName;
 
-		do {
+		while($model::query()->where($fieldName, $newName)->exists()) {
 			$count++;
 			$newName = "$baseName ($count)";
-		} while($model::query()->where($fieldName, $newName)->exists());
+		}
 
 		return $newName;
 	}
