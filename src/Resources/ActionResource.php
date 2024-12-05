@@ -15,9 +15,10 @@ abstract class ActionResource
 		$type = static::$type ?: basename(preg_replace("#\\\\#", "/", static::class));
 
 		return [
-			'id'          => $model->getKey(),
-			'__type'      => $type,
-			'__timestamp' => request()->header('X-Timestamp') ?: microtime(true),
+			'id'           => $model->getKey(),
+			'__type'       => $type,
+			'__timestamp'  => request()->header('X-Timestamp') ?: microtime(true),
+			'__deleted_at' => $model->deleted_at,
 		];
 	}
 
