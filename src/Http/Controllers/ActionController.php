@@ -92,7 +92,7 @@ abstract class ActionController extends Controller
 	public function details($model): mixed
 	{
 		if (!$model) {
-			return response('Item not found', 404);
+			return response(['error' => true, 'message' => 'Item not found'], 404);
 		}
 
 		return static::$resource::details($model);
