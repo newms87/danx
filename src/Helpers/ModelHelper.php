@@ -13,13 +13,13 @@ class ModelHelper
 	/**
 	 * Searches the database for the next available model name
 	 */
-	public static function getNextModelName(Model $model, $fieldName = 'name')
+	public static function getNextModelName(Model $model, $fieldName = 'name', $filter = [])
 	{
 		$count    = 0;
 		$baseName = trim(preg_replace("/\\(\\d+\\)$/", '', trim($model->{$fieldName})));
 		$newName  = $baseName;
 
-		while($model::query()->where($fieldName, $newName)->exists()) {
+		while($model::query()->where($fieldName, $newName)->filter($filter)->exists()) {
 			$count++;
 			$newName = "$baseName ($count)";
 		}
