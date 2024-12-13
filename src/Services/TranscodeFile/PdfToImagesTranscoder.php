@@ -13,7 +13,7 @@ class PdfToImagesTranscoder extends FileTranscoderAbstract implements FileTransc
 		$MB = 1024 * 1024;
 
 		// 5s + 7.5s per MB for PDF to Images via Convert API
-		return 5000 + ($storedFile->size / $MB * 7500);
+		return 5000 + (int)round($storedFile->size / $MB * 7500);
 	}
 
 	public function run(StoredFile $storedFile, array $options = []): array
