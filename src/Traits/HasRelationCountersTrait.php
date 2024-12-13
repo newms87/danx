@@ -2,6 +2,8 @@
 
 namespace Newms87\Danx\Traits;
 
+use App\Models\Workflow\Artifactable;
+use App\Models\Workflow\WorkflowRun;
 use Exception;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -57,7 +59,8 @@ trait HasRelationCountersTrait
 				if ($isDelete) {
 					$query->where($childModel->getQualifiedKeyName(), '!=', $childModel->getKey());
 				}
-				$parentModel->forceFill([$counterField => $query->count()])->save();
+
+        		$parentModel->forceFill([$counterField => $query->count()])->save();
 			}
 		}
 	}
@@ -70,14 +73,16 @@ trait HasRelationCountersTrait
 			throw new Exception("Not yet implemented relationship MorphToMany for " . static::class);
 		}
 
-		if ($relationshipMethod instanceof MorphMany || !($childModel instanceof MorphPivot)) {
-			return static::query()->whereHas($relationshipName, fn(Builder $builder) => $builder->where($childModel->getQualifiedKeyName(), $childModel->id))->get();
-		}
+        $foreignKey = $childModel->getForeignKey();
+        $foreignId  = $childModel->$foreignKey;
 
-		// Assume the child model is a pivot table
-		$foreignKey = $childModel->getForeignKey();
-		$foreignId  = $childModel->$foreignKey;
+        if ($childModel instanceof MorphPivot) {
+            if ($relationshipMethod instanceof MorphMany) {
+                return static::query()->whereHas($relationshipName, fn(Builder $builder) => $builder->where($foreignKey, $foreignId))->get();
+            }
+            return static::query()->where($foreignKey, $foreignId)->get();
+        }
 
-		return static::query()->where($foreignKey, $foreignId)->get();
+        return static::query()->whereHas($relationshipName, fn(Builder $builder) => $builder->where($childModel->getQualifiedKeyName(), $childModel->id))->get();
 	}
 }
