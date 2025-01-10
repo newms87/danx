@@ -97,15 +97,9 @@ abstract class ActionController extends Controller
 			return response(['error' => true, 'message' => 'Item not found'], 404);
 		}
 
-		return static::$resource::details($model);
-	}
+		$fields = app(PagerRequest::class)->getJson('fields');
 
-	/**
-	 * Retrieve a related resource for the given model
-	 */
-	public function relation($model, $relation): mixed
-	{
-		return static::$resource::relation($model, $relation);
+		return static::$resource::details($model, $fields);
 	}
 
 	/**
@@ -138,7 +132,7 @@ abstract class ActionController extends Controller
 			return response([
 				'success' => true,
 				'result'  => $result,
-				'item'    => $model ? $this->details($model->refresh()) : null,
+				'item'    => $model ? $this->details($model->refresh(), $request) : null,
 			]);
 		} catch(Throwable $throwable) {
 			$response = [

@@ -34,7 +34,7 @@ abstract class ActionResource
 		}
 
 		/** @noinspection PhpParamsInspection */
-		$data = static::data($model, $includeFields) + static::typedData($model);
+		$data = static::data($model, $includeFields);
 
 		$responseData = [];
 
@@ -58,7 +58,7 @@ abstract class ActionResource
 			}
 		}
 
-		return $responseData;
+		return $responseData + static::typedData($model);
 	}
 
 	public static function collection(Collection|array|null $collection, array $includeFields = [])
@@ -85,17 +85,8 @@ abstract class ActionResource
 	 *  a) ['*' => ['*' => ["*" => true]]]
 	 *  b) ['*' => ['prop' => ['name' => true]]]
 	 */
-	public static function details(Model $model): array
+	public static function details(Model $model, ?array $includeFields = null): array
 	{
-		return static::make($model, ['*' => true]);
-	}
-
-	public static function relation(Model $model, $relation): array
-	{
-		if (!method_exists(static::class, $relation)) {
-			throw new Exception('Relation ' . $relation . ' does not exist on ' . static::class);
-		}
-
-		return static::{$relation}($model) + static::typedData($model);
+		return static::make($model, $includeFields ?? ['*' => true]);
 	}
 }
