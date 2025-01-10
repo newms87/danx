@@ -51,9 +51,9 @@ abstract class ActionController extends Controller
 	/**
 	 * A list of formatted models
 	 */
-	protected function collection(array|Collection|null $instances): AnonymousResourceCollection|array|Collection
+	protected function collection(array|Collection|null $instances, array $includeFields = []): AnonymousResourceCollection|array|Collection
 	{
-		return static::$resource::collection($instances);
+		return static::$resource::collection($instances, $includeFields);
 	}
 
 	/**
@@ -68,8 +68,10 @@ abstract class ActionController extends Controller
 			->sort($request->sort())
 			->paginate($request->perPage(50));
 
+		$fields = $request->getJson('fields', []);
+
 		return [
-			'data' => $this->collection($results->items()),
+			'data' => $this->collection($results->items(), $fields),
 			'meta' => [
 				'total'        => $results->total(),
 				'current_page' => $results->currentPage(),

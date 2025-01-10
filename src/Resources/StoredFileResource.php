@@ -2,50 +2,51 @@
 
 namespace Newms87\Danx\Resources;
 
-use Illuminate\Database\Eloquent\Model;
 use Newms87\Danx\Models\Utilities\StoredFile;
 use Newms87\Danx\Services\TranscodeFileService;
 
 class StoredFileResource extends ActionResource
 {
-	/**
-	 * @param StoredFile $model
-	 */
-	public static function data(Model $model): array
+	public static function data(StoredFile $storedFile): array
 	{
-		$data = [
-			'id'         => $model->id,
-			'filename'   => $model->filename,
-			'url'        => $model->url,
-			'mime'       => $model->mime,
-			'size'       => $model->size,
-			'location'   => $model->location,
-			'meta'       => $model->meta,
-			'created_at' => $model->created_at,
+		return [
+			'id'         => $storedFile->id,
+			'filename'   => $storedFile->filename,
+			'url'        => $storedFile->url,
+			'mime'       => $storedFile->mime,
+			'size'       => $storedFile->size,
+			'location'   => $storedFile->location,
+			'meta'       => $storedFile->meta,
+			'created_at' => $storedFile->created_at,
+			'thumb'      => fn($fields) => static::getThumb($storedFile),
+			'optimized'  => fn($fields) => static::getThumb($storedFile),
+			'transcodes' => fn($fields) => StoredFileResource::collection($storedFile->transcodes()->get(), $fields),
 		];
-
-		// If this file is not a transcoded file, add a thumb and optimized transcode entry
-		if (!$model->original_stored_file_id && $model->isPdf()) {
-			$thumb = $model->transcodes()->where('transcode_name', TranscodeFileService::TRANSCODE_PDF_TO_IMAGES)->first();
-
-			if ($thumb) {
-				$data['thumb'] = StoredFileResource::make($thumb);
-
-				// XXX: TODO For now, optimized and thumb are the same, eventually we will want to optimize the thumb
-				$data['optimized'] = StoredFileResource::make($thumb);
-			}
-		}
-
-		return $data;
 	}
 
 	/**
-	 * @param StoredFile $model
+	 * Get the thumb for a stored file.
+	 *
+	 * NOTE: Only applicable to PDF files for now
 	 */
-	public static function details(Model $model): array
+	public static function getThumb(StoredFile $storedFile)
 	{
-		return static::make($model, [
-			'transcodes' => StoredFileResource::collection($model->transcodes()->get()),
-		]);
+		if ($storedFile->isPdf()) {
+			if ($storedFile->original_stored_file_id) {
+				$thumb = $storedFile;
+			} else {
+				$thumb = $storedFile->transcodes()->where('transcode_name', TranscodeFileService::TRANSCODE_PDF_TO_IMAGES)->first();
+			}
+
+			return [
+				'id'       => $thumb,
+				'url'      => $thumb,
+				'filename' => $thumb->filename,
+				'mime'     => $thumb->mime,
+				'size'     => $thumb->size,
+			];
+		} else {
+			return null;
+		}
 	}
 }

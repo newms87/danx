@@ -42,7 +42,7 @@ class PagerRequest
 		return $this->getJson('input');
 	}
 
-	public function getJson($field)
+	public function getJson($field, $default = null)
 	{
 		if ($this->has($field)) {
 			$value = $this->get($field);
@@ -53,7 +53,7 @@ class PagerRequest
 			}
 		}
 
-		return null;
+		return $default;
 	}
 
 	public function getJsonOrArray($field, $separator = ',')
