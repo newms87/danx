@@ -36,6 +36,13 @@ abstract class ActionResource
 		/** @noinspection PhpParamsInspection */
 		$data = static::data($model, $includeFields);
 
+		// Validate the includeFields
+		foreach($includeFields as $fieldName => $field) {
+			if ($fieldName !== '*' && !isset($data[$fieldName])) {
+				throw new Exception('Field "' . $fieldName . '" is not a valid field for ' . static::class);
+			}
+		}
+
 		$responseData = [];
 
 		foreach($data as $fieldName => $datum) {
