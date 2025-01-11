@@ -2,7 +2,9 @@
 
 namespace Newms87\Danx\Models\Utilities;
 
+use Database\Factories\Utilities\StoredFileFactory;
 use Illuminate\Contracts\Filesystem\Filesystem;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
@@ -20,6 +22,7 @@ class StoredFile extends Model implements AuditableContract
 {
 	use
 		Auditable,
+		HasFactory,
 		SerializesDates,
 		SoftDeletes,
 		UuidModelTrait;
@@ -101,6 +104,11 @@ class StoredFile extends Model implements AuditableContract
 		'meta'     => 'json',
 		'location' => 'json',
 	];
+
+	protected static function newFactory()
+	{
+		return StoredFileFactory::new();
+	}
 
 	/**
 	 * Synchronize the list of files to the instance type. Disassociates any existing

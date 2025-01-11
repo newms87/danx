@@ -56,4 +56,4 @@ function route($name, $parameters = [], $absolute = true): string
 	return app('url')->route($name, $parameters, $absolute);
 }
 
-function fake(): mixed { }
+function fake(): \Faker\Generator { }
