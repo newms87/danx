@@ -34,7 +34,7 @@ class StoredFileResource extends ActionResource
 		if (!$storedFile) {
 			return null;
 		}
-		
+
 		if ($storedFile->isPdf()) {
 			if ($storedFile->original_stored_file_id) {
 				$thumb = $storedFile;
@@ -42,15 +42,17 @@ class StoredFileResource extends ActionResource
 				$thumb = $storedFile->transcodes()->where('transcode_name', TranscodeFileService::TRANSCODE_PDF_TO_IMAGES)->first();
 			}
 
-			return [
-				'id'       => $thumb,
-				'url'      => $thumb,
-				'filename' => $thumb->filename,
-				'mime'     => $thumb->mime,
-				'size'     => $thumb->size,
-			];
-		} else {
-			return null;
+			if ($thumb) {
+				return [
+					'id'       => $thumb,
+					'url'      => $thumb,
+					'filename' => $thumb->filename,
+					'mime'     => $thumb->mime,
+					'size'     => $thumb->size,
+				];
+			}
 		}
+
+		return null;
 	}
 }
