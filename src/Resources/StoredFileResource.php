@@ -29,8 +29,12 @@ class StoredFileResource extends ActionResource
 	 *
 	 * NOTE: Only applicable to PDF files for now
 	 */
-	public static function getThumb(StoredFile $storedFile)
+	public static function getThumb(?StoredFile $storedFile)
 	{
+		if (!$storedFile) {
+			return null;
+		}
+		
 		if ($storedFile->isPdf()) {
 			if ($storedFile->original_stored_file_id) {
 				$thumb = $storedFile;
