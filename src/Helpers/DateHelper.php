@@ -263,59 +263,39 @@ class DateHelper
 	}
 
 	/**
-	 * @param        $date
-	 * @param string $format
-	 * @return false|string
+	 * Formats a date into human-readable format
 	 */
-	public static function formatDate($date, $format = 'm/d/Y')
+	public static function formatDate(Carbon|string $date = '', $format = 'm/d/Y'): string|false
+	{
+		return static::formatDateTime($date, $format);
+	}
+
+	/**
+	 * Formats a date and time into human-readable format
+	 */
+	public static function formatDateTime(Carbon|string $date = null, $format = 'm/d/Y H:i:s'): string|false
 	{
 		try {
-			return (new Carbon($date))->format($format);
+			return carbon($date)->format($format);
 		} catch(Exception $e) {
 			return false;
 		}
 	}
 
 	/**
-	 * @param        $date
-	 * @param string $format
-	 * @return false|string
+	 * Formats a date into a database-friendly format
 	 */
-	public static function formatDateTime($date, $format = 'm/d/Y H:i:s')
+	public static function formatDateDB($datetime, $format = 'Y-m-d'): false|string
 	{
-		try {
-			return (new Carbon($date))->format($format);
-		} catch(Exception $e) {
-			return false;
-		}
+		return static::formatDateTime($datetime, $format);
 	}
 
 	/**
-	 * @param        $datetime
-	 * @param string $format
-	 * @return false|string
+	 * Formats a date and time into a database-friendly format
 	 */
-	public static function formatDateDB($datetime, $format = 'Y-m-d')
+	public static function formatDateTimeDB($datetime, $format = 'Y-m-d H:i:s'): false|string
 	{
-		try {
-			return (new Carbon($datetime))->format($format);
-		} catch(Exception $e) {
-			return false;
-		}
-	}
-
-	/**
-	 * @param        $datetime
-	 * @param string $format
-	 * @return false|string
-	 */
-	public static function formatDateTimeDB($datetime, $format = 'Y-m-d H:i:s')
-	{
-		try {
-			return (new Carbon($datetime))->format($format);
-		} catch(Exception $e) {
-			return false;
-		}
+		return static::formatDateTime($datetime, $format);
 	}
 
 	/**
