@@ -123,6 +123,35 @@ class ArrayHelper
 	}
 
 	/**
+	 * Merges 1 or more arrays recursively using array_merge_recursive(), and additionally ensuring each array entry of
+	 * scalar values are unique
+	 */
+	public static function mergeArraysRecursivelyUnique(array ...$arrays): array
+	{
+		$merged = array_merge_recursive(...$arrays);
+
+		return static::recursivelyUnique($merged);
+	}
+
+	/**
+	 * Recursively removes duplicate values from an array
+	 */
+	public static function recursivelyUnique(array $array): array
+	{
+		foreach($array as $key => $value) {
+			if (is_array($value)) {
+				$array[$key] = self::recursivelyUnique($value);
+			}
+		}
+
+		if (!empty($array) && is_scalar(reset($array))) {
+			return array_unique($array, SORT_REGULAR);
+		}
+
+		return $array;
+	}
+
+	/**
 	 * Cross Product Extract Data takes an array of data and a list of fields to extract from the data. It then returns
 	 * an array of arrays where each array is a cross product of the extracted fields.
 	 */

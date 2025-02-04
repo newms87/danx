@@ -3,6 +3,7 @@
 namespace Newms87\Danx\Helpers;
 
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
 use ReflectionClass;
@@ -11,20 +12,28 @@ use Symfony\Component\Finder\Finder;
 class ModelHelper
 {
 	/**
-	 * Searches the database for the next available model name
+	 * Searches the database for the next available value for a field
 	 */
-	public static function getNextModelName(Model $model, $fieldName = 'name', $filter = [])
+	public static function getNextUniqueValue(Builder $query, $fieldName, $value): string
 	{
-		$count    = 0;
-		$baseName = trim(preg_replace("/\\(\\d+\\)$/", '', trim($model->{$fieldName})));
-		$newName  = $baseName;
+		$count     = 0;
+		$baseValue = trim(preg_replace("/\\(\\d+\\)$/", '', trim($value)));
+		$newValue  = $baseValue;
 
-		while($model::query()->where($fieldName, $newName)->filter($filter)->exists()) {
+		while($query->clone()->where($fieldName, $newValue)->exists()) {
 			$count++;
-			$newName = "$baseName ($count)";
+			$newValue = "$baseValue ($count)";
 		}
 
-		return $newName;
+		return $newValue;
+	}
+
+	/**
+	 * Searches the database for the next available model name
+	 */
+	public static function getNextModelName(Model $model, $fieldName = 'name', $filter = []): string
+	{
+		return static::getNextUniqueValue($model::query()->filter($filter), $fieldName, $model->{$fieldName});
 	}
 
 	public static function getModelsWithTrait($trait)
