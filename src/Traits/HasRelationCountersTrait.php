@@ -2,8 +2,6 @@
 
 namespace Newms87\Danx\Traits;
 
-use App\Models\Workflow\Artifactable;
-use App\Models\Workflow\WorkflowRun;
 use Exception;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -39,50 +37,65 @@ trait HasRelationCountersTrait
 		}
 	}
 
-	public static function syncRelatedModels(Model $childModel, $isDelete = false): void
+	public function updateRelationCounter($relationshipName): void
+	{
+		$relatedModel = $this->$relationshipName()->getRelated();
+		$counterField = $this->relationCounters[$relatedModel::class][$relationshipName];
+
+		$this->forceFill([$counterField => $this->$relationshipName()->count()])->save();
+	}
+
+	public static function syncRelatedModels(Model $relatedModel, $isDelete = false): void
 	{
 		// Resolve the relationship counters based on the child model's class
-		$modelCounters = (new static)->relationCounters[$childModel::class] ?? null;
+		$modelCounters = (new static)->relationCounters[$relatedModel::class] ?? null;
 
 		if (!$modelCounters) {
-			throw new Exception(static::class . " does not have any relation counters defined for " . $childModel::class);
+			throw new Exception(static::class . " does not have any relation counters defined for " . $relatedModel::class);
 		}
 
 		foreach($modelCounters as $relationshipName => $counterField) {
 			// First query the parent models that depend on the child that was modified
-			$parentModels = static::resolveRelationCountersParentModels($relationshipName, $childModel);
+			$parentModels = static::resolveRelationCountersParentModels($relationshipName, $relatedModel);
 
 			// Then loop through each parent and sync the count of the number of all child models with the same relationship as the given child model
 			foreach($parentModels as $parentModel) {
 				$query = $parentModel->{$relationshipName}();
 				// We have to exclude the current model from the count if it's being deleted since we are tracking this before the delete actually happens
 				if ($isDelete) {
-					$query->where($childModel->getQualifiedKeyName(), '!=', $childModel->getKey());
+					$query->where($relatedModel->getQualifiedKeyName(), '!=', $relatedModel->getKey());
 				}
 
-        		$parentModel->forceFill([$counterField => $query->count()])->save();
+				$parentModel->forceFill([$counterField => $query->count()])->save();
 			}
 		}
 	}
 
-	public static function resolveRelationCountersParentModels($relationshipName, Model $childModel)
+	public static function resolveRelationCountersParentModels($relationshipName, Model $relatedModel)
 	{
 		$relationshipMethod = (new static)->$relationshipName();
 
+		// Handle Morph to Many relationships
 		if ($relationshipMethod instanceof MorphToMany) {
-			throw new Exception("Not yet implemented relationship MorphToMany for " . static::class);
+			$relatedPivotKey = $relationshipMethod->getQualifiedRelatedPivotKeyName();
+			$foreignId       = $relatedModel->getKey();
+
+			return static::query()->whereHas($relationshipName, fn(Builder $builder) => $builder->where($relatedPivotKey, $foreignId))->get();
 		}
 
-        $foreignKey = $childModel->getForeignKey();
-        $foreignId  = $childModel->$foreignKey;
+		// Handle Morph pivot type relationships
+		if ($relatedModel instanceof MorphPivot) {
+			$foreignKey = $relatedModel->getForeignKey();
+			$foreignId  = $relatedModel->$foreignKey;
 
-        if ($childModel instanceof MorphPivot) {
-            if ($relationshipMethod instanceof MorphMany) {
-                return static::query()->whereHas($relationshipName, fn(Builder $builder) => $builder->where($foreignKey, $foreignId))->get();
-            }
-            return static::query()->where($foreignKey, $foreignId)->get();
-        }
+			if ($relationshipMethod instanceof MorphMany) {
+				return static::query()->whereHas($relationshipName, fn(Builder $builder) => $builder->where($foreignKey, $foreignId))->get();
+			}
 
-        return static::query()->whereHas($relationshipName, fn(Builder $builder) => $builder->where($childModel->getQualifiedKeyName(), $childModel->id))->get();
+			return static::query()->where($foreignKey, $foreignId)->get();
+		}
+
+		// Handle all other relation
+		return static::query()->whereHas($relationshipName, fn(Builder $builder) => $builder->where($relatedModel->getQualifiedKeyName(), $relatedModel->id))->get();
 	}
 }
