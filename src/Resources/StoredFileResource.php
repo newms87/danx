@@ -45,7 +45,7 @@ class StoredFileResource extends ActionResource
 			if ($thumb) {
 				return [
 					'id'       => $thumb,
-					'url'      => $thumb,
+					'url'      => $thumb->url,
 					'filename' => $thumb->filename,
 					'mime'     => $thumb->mime,
 					'size'     => $thumb->size,

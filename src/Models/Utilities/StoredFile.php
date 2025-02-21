@@ -6,6 +6,7 @@ use Database\Factories\Utilities\StoredFileFactory;
 use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -153,6 +154,11 @@ class StoredFile extends Model implements AuditableContract
 				$file->url = $file->storageDisk()->url($file->filepath);
 			}
 		});
+	}
+
+	public function originalFile(): StoredFile|BelongsTo
+	{
+		return $this->belongsTo(StoredFile::class, 'original_stored_file_id');
 	}
 
 	/**
@@ -348,6 +354,6 @@ class StoredFile extends Model implements AuditableContract
 	 */
 	public function __toString()
 	{
-		return "<StoredFile ($this->id) $this->filename mime='$this->mime' size='$this->human_size'>";
+		return "<StoredFile ($this->id) $this->filename mime='$this->mime' size='$this->human_size' page='$this->page_number'>";
 	}
 }

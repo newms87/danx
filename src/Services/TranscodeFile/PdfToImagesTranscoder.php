@@ -28,8 +28,9 @@ class PdfToImagesTranscoder extends FileTranscoderAbstract implements FileTransc
 
 		foreach($result['Files'] as $page => $image) {
 			$transcodedFiles[] = [
-				'filename' => "Page " . ($page + 1) . " -- $image[FileName]",
-				'data'     => base64_decode($image['FileData']),
+				'filename'    => "Page " . ($page + 1) . " -- $image[FileName]",
+				'data'        => base64_decode($image['FileData']),
+				'page_number' => $page + 1,
 			];
 		}
 

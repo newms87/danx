@@ -28,13 +28,14 @@ class TranscodeFileService
 		self::TRANSCODE_IMAGE_TO_VERTICAL_CHUNKS => ImageToVerticalChunksTranscoder::class,
 	];
 
-	public function storeTranscodedFile(StoredFile $storedFile, $transcodeName, $filename, $data)
+	public function storeTranscodedFile(StoredFile $storedFile, $transcodeName, $filename, $data, int $pageNumber = null): StoredFile
 	{
 		$dir                                     = $storedFile->id;
 		$filepath                                = "transcodes/$transcodeName/$dir/$filename";
 		$transcodedFile                          = app(FileRepository::class)->createFileWithContents($filepath, $data);
 		$transcodedFile->original_stored_file_id = $storedFile->id;
 		$transcodedFile->transcode_name          = $transcodeName;
+		$transcodedFile->page_number             = $pageNumber ?? $storedFile->page_number;
 		$transcodedFile->save();
 
 		return $transcodedFile;
@@ -92,7 +93,7 @@ class TranscodeFileService
 		$transcodedFiles = $this->getTranscoder($transcodeName)->run($storedFile, $options);
 
 		foreach($transcodedFiles as $transcodedFile) {
-			$transcodedFile = $this->storeTranscodedFile($storedFile, $transcodeName, $transcodedFile['filename'], $transcodedFile['data']);
+			$transcodedFile = $this->storeTranscodedFile($storedFile, $transcodeName, $transcodedFile['filename'], $transcodedFile['data'], $transcodedFile['page_number'] ?? null);
 			$transcodes->push($transcodedFile);
 		}
 

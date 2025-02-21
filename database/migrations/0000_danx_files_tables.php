@@ -20,6 +20,7 @@ return new class extends Migration {
 				$table->json('exif')->nullable();
 				$table->json('meta')->nullable();
 				$table->json('location')->nullable();
+				$table->unsignedInteger('page_number')->nullable();
 				$table->string('transcode_name')->nullable();
 				$table->uuid('original_stored_file_id')->nullable();
 				$table->timestamps();
