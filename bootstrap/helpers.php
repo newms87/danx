@@ -120,10 +120,21 @@ if (!function_exists('uuid')) {
 if (!function_exists('carbon')) {
 	function carbon($date = null, $tz = null): Carbon\Carbon
 	{
-		// sanitize and reformat unparseable dates
-		$date = preg_replace('/\s+/', ' ', $date);
-		$date = str_replace('-', '/', $date);
+		if (is_string($date)) {
+			// sanitize and reformat unparseable dates
+			$date = preg_replace('/\s+/', ' ', $date);
+			$date = str_replace('-', '/', $date);
+		} elseif (is_numeric($date)) {
+			$date = '@' . $date;
+		}
 
 		return Carbon\Carbon::parse($date, $tz);
+	}
+}
+
+if (!function_exists('now_ms')) {
+	function now_ms(): string
+	{
+		return now()->format('Y-m-d H:i:s.u');
 	}
 }
