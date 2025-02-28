@@ -2,9 +2,9 @@
 
 namespace Newms87\Danx\Api\ConvertApi;
 
-use Newms87\Danx\Api\BasicAuthApi;
+use Newms87\Danx\Api\BearerTokenApi;
 
-class ConvertApi extends BasicAuthApi
+class ConvertApi extends BearerTokenApi
 {
 	protected array $rateLimits = [
 		[
@@ -18,9 +18,8 @@ class ConvertApi extends BasicAuthApi
 
 	public function __construct()
 	{
-		$this->clientId     = config('convertapi.api_key');
-		$this->clientSecret = config('convertapi.secret_key');
-		$this->baseApiUrl   = config('convertapi.url');
+		$this->token      = config('convertapi.api_token');
+		$this->baseApiUrl = config('convertapi.url');
 	}
 
 	/**
