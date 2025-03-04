@@ -18,7 +18,7 @@ abstract class ActionResource
 		return [
 			'id'           => $model->getKey(),
 			'__type'       => $type,
-			'__timestamp'  => request()->header('X-Timestamp') ?: microtime(true),
+			'__timestamp'  => $model->updated_at?->getPreciseTimestamp(3) ?: microtime(true),
 			'__deleted_at' => $model->deleted_at,
 		];
 	}
