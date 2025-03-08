@@ -2,11 +2,11 @@
 
 namespace Newms87\Danx\Console\Commands;
 
-use Newms87\Danx\Jobs\SyncDirtyJobJob;
-use Newms87\Danx\Models\Job\SyncJob;
 use Illuminate\Console\Command;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Log;
+use Newms87\Danx\Jobs\SyncDirtyJobJob;
+use Newms87\Danx\Models\Job\SyncJob;
 use Throwable;
 
 class SyncDirtyJobsCommand extends Command
@@ -21,7 +21,7 @@ class SyncDirtyJobsCommand extends Command
 	{
 		// All dirty Sync Jobs that have not been dispatched in the last 30 minutes and have less than 3 attempts
 		$dirtySyncJobs = SyncJob::whereNotNull('dirty_at')
-			->whereDoesntHave('jobDispatch',
+			->whereDoesntHave('jobDispatches',
 				fn(Builder $builder) => $builder->where('created_at', '>', now()->subMinutes(30)))
 			->where('attempts', '<', 3)
 			->get();
