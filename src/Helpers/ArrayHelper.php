@@ -3,6 +3,7 @@
 namespace Newms87\Danx\Helpers;
 
 use Illuminate\Support\Arr;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 
 class ArrayHelper
@@ -149,6 +150,25 @@ class ArrayHelper
 		}
 
 		return $array;
+	}
+
+	public static function crossProduct(array|Collection $artifactGroups): Collection
+	{
+		if (empty($artifactGroups)) {
+			return collect([]);
+		}
+
+		return collect($artifactGroups)->reduce(function (Collection $acc, array $group) {
+			$result = collect();
+
+			foreach($acc as $accItem) {
+				foreach($group as $item) {
+					$result->push(array_merge($accItem, [$item]));
+				}
+			}
+
+			return $result;
+		}, collect([[]]));
 	}
 
 	/**
