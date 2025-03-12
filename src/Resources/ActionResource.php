@@ -38,7 +38,7 @@ abstract class ActionResource
 
 		// Validate the includeFields
 		foreach($includeFields as $fieldName => $field) {
-			if ($fieldName !== '*' && !isset($data[$fieldName])) {
+			if ($fieldName !== '*' && !array_key_exists($fieldName, $data)) {
 				throw new Exception('Field "' . $fieldName . '" is not a valid field for ' . static::class);
 			}
 		}
