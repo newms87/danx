@@ -11,16 +11,35 @@ abstract class ActionResource
 {
 	public static string $type = '';
 
-	public static function typedData(Model $model): array
+	public static function typedData(Model $model, array $responseData = []): array
 	{
 		$type = static::$type ?: basename(preg_replace("#\\\\#", "/", static::class));
 
+		$latestTimestamp = static::resolveLatestTimestamp($responseData);
+		$timestamp       = max($latestTimestamp, $model->updated_at?->getPreciseTimestamp(3) ?: microtime(true));
+
 		return [
-			'id'           => $model->getKey(),
-			'__type'       => $type,
-			'__timestamp'  => $model->updated_at?->getPreciseTimestamp(3) ?: microtime(true),
-			'__deleted_at' => $model->deleted_at,
-		];
+				'id'           => $model->getKey(),
+				'__type'       => $type,
+				'__timestamp'  => $timestamp,
+				'__deleted_at' => $model->deleted_at,
+			] + $responseData;
+	}
+
+	/**
+	 * Recursively searching an object for __timestamps and returns the latest one
+	 */
+
+	public static function resolveLatestTimestamp(array $responseData): float
+	{
+		$timestamp = $responseData['__timestamp'] ?? 0.0;
+		foreach($responseData as $value) {
+			if (is_array($value)) {
+				$timestamp = max($timestamp, static::resolveLatestTimestamp($value));
+			}
+		}
+
+		return $timestamp;
 	}
 
 	public static function make(Model $model = null, array $includeFields = []): array|null
@@ -65,7 +84,7 @@ abstract class ActionResource
 			}
 		}
 
-		return $responseData + static::typedData($model);
+		return static::typedData($model, $responseData);
 	}
 
 	public static function collection(Collection|array|null $collection, array $includeFields = [])
