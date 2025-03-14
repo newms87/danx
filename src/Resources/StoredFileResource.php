@@ -10,17 +10,18 @@ class StoredFileResource extends ActionResource
 	public static function data(StoredFile $storedFile): array
 	{
 		return [
-			'id'         => $storedFile->id,
-			'filename'   => $storedFile->filename,
-			'url'        => $storedFile->url,
-			'mime'       => $storedFile->mime,
-			'size'       => $storedFile->size,
-			'location'   => $storedFile->location,
-			'meta'       => $storedFile->meta,
-			'created_at' => $storedFile->created_at,
-			'thumb'      => fn($fields) => static::getThumb($storedFile),
-			'optimized'  => fn($fields) => static::getThumb($storedFile),
-			'transcodes' => fn($fields) => StoredFileResource::collection($storedFile->transcodes()->get(), $fields),
+			'id'          => $storedFile->id,
+			'filename'    => $storedFile->filename,
+			'url'         => $storedFile->url,
+			'mime'        => $storedFile->mime,
+			'size'        => $storedFile->size,
+			'location'    => $storedFile->location,
+			'meta'        => $storedFile->meta,
+			'page_number' => $storedFile->page_number,
+			'created_at'  => $storedFile->created_at,
+			'thumb'       => fn($fields) => static::getThumb($storedFile),
+			'optimized'   => fn($fields) => static::getThumb($storedFile),
+			'transcodes'  => fn($fields) => StoredFileResource::collection($storedFile->transcodes()->get(), $fields),
 		];
 	}
 
@@ -29,11 +30,13 @@ class StoredFileResource extends ActionResource
 	 *
 	 * NOTE: Only applicable to PDF files for now
 	 */
-	public static function getThumb(?StoredFile $storedFile)
+	public static function getThumb(?StoredFile $storedFile): null|array
 	{
 		if (!$storedFile) {
 			return null;
 		}
+
+		$thumb = null;
 
 		if ($storedFile->isPdf()) {
 			if ($storedFile->original_stored_file_id) {
@@ -41,18 +44,18 @@ class StoredFileResource extends ActionResource
 			} else {
 				$thumb = $storedFile->transcodes()->where('transcode_name', TranscodeFileService::TRANSCODE_PDF_TO_IMAGES)->first();
 			}
-
-			if ($thumb) {
-				return [
-					'id'       => $thumb,
-					'url'      => $thumb->url,
-					'filename' => $thumb->filename,
-					'mime'     => $thumb->mime,
-					'size'     => $thumb->size,
-				];
-			}
 		}
 
-		return null;
+		if (!$thumb) {
+			return null;
+		}
+
+		return [
+			'id'       => $thumb->id,
+			'url'      => $thumb->url,
+			'filename' => $thumb->filename,
+			'mime'     => $thumb->mime,
+			'size'     => $thumb->size,
+		];
 	}
 }

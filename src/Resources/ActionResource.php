@@ -15,31 +15,12 @@ abstract class ActionResource
 	{
 		$type = static::$type ?: basename(preg_replace("#\\\\#", "/", static::class));
 
-		$latestTimestamp = static::resolveLatestTimestamp($responseData);
-		$timestamp       = max($latestTimestamp, $model->updated_at?->getPreciseTimestamp(3) ?: microtime(true));
-
 		return [
 				'id'           => $model->getKey(),
 				'__type'       => $type,
-				'__timestamp'  => $timestamp,
+				'__timestamp'  => $model->updated_at?->getPreciseTimestamp(3) ?: microtime(true),
 				'__deleted_at' => $model->deleted_at,
 			] + $responseData;
-	}
-
-	/**
-	 * Recursively searching an object for __timestamps and returns the latest one
-	 */
-
-	public static function resolveLatestTimestamp(array $responseData): float
-	{
-		$timestamp = $responseData['__timestamp'] ?? 0.0;
-		foreach($responseData as $value) {
-			if (is_array($value)) {
-				$timestamp = max($timestamp, static::resolveLatestTimestamp($value));
-			}
-		}
-
-		return $timestamp;
 	}
 
 	public static function make(Model $model = null, array $includeFields = []): array|null

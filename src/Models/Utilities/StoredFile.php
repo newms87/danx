@@ -236,7 +236,7 @@ class StoredFile extends Model implements AuditableContract
 	 * @param $mimes
 	 * @return bool
 	 */
-	public function isMime($mimes)
+	public function isMime($mimes): bool
 	{
 		if (!is_array($mimes)) {
 			$mimes = [$mimes];
@@ -250,7 +250,7 @@ class StoredFile extends Model implements AuditableContract
 	 *
 	 * @return bool
 	 */
-	public function isImage()
+	public function isImage(): bool
 	{
 		return in_array($this->mime, static::IMAGE_MIMES);
 	}
@@ -259,7 +259,7 @@ class StoredFile extends Model implements AuditableContract
 	 * Checks if the file is an image format (or a format renderable as an image)
 	 * @return bool
 	 */
-	public function hasPreviewImage()
+	public function hasPreviewImage(): bool
 	{
 		return $this->isImage() || $this->isPdf();
 	}
@@ -269,7 +269,7 @@ class StoredFile extends Model implements AuditableContract
 	 *
 	 * @return bool
 	 */
-	public function isVideo()
+	public function isVideo(): bool
 	{
 		return in_array($this->mime, static::VIDEO_MIMES);
 	}
@@ -279,9 +279,19 @@ class StoredFile extends Model implements AuditableContract
 	 *
 	 * @return bool
 	 */
-	public function isPdf()
+	public function isPdf(): bool
 	{
 		return $this->mime === static::MIME_PDF;
+	}
+
+	public function isText(): bool
+	{
+		return $this->mime === static::MIME_TEXT;
+	}
+
+	public function isTranscode(): bool
+	{
+		return $this->original_stored_file_id !== null;
 	}
 
 	/**
