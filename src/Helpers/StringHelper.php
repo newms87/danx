@@ -400,4 +400,18 @@ class StringHelper
 
 		return $nestedArray;
 	}
+
+	public static function incrementSemver(string $version): string
+	{
+		$parts = explode('.', $version);
+
+		if (count($parts) !== 3) {
+			throw new Exception("Invalid SemVer format: $version");
+		}
+
+		// Increment the patch version
+		$parts[2] = (int)$parts[2] + 1;
+
+		return implode('.', $parts);
+	}
 }
