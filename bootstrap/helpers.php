@@ -1,45 +1,20 @@
 <?php
 
-use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Routing\UrlGenerator;
-use Illuminate\Support\Str;
 
 /**
  * Check if authenticated user has permissions
- *
- * @param                           $permission
- * @param bool                      $requireAll
- * @param Authenticatable|User|null $user
- * @return bool
  */
 if (!function_exists('can')) {
-	function can(array|string $permission, $requireAll = false, Authenticatable $user = null)
+	function can(array|string $permission): bool
 	{
-		$user = $user ?? user();
-
-		if (!$user) {
-			return false;
-		}
-
-		if (is_string($permission)) {
-			$permission = Str::of($permission)->explode('|');
-		}
-
-		$can = $user->can($permission);
-
-		if ($requireAll) {
-			return !$can->contains(false);
-		}
-
-		return $can->contains(true);
+		return user()?->can($permission) ?: false;
 	}
 }
 
 if (!function_exists('user')) {
 	/**
 	 * Returns an authenticated User
-	 *
-	 * @return Authenticatable|\App\Models\User|null
 	 */
 	function user()
 	{
