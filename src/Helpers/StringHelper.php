@@ -414,4 +414,61 @@ class StringHelper
 
 		return implode('.', $parts);
 	}
+
+	/**
+	 * Converts a list of pages into a shortened variation string.
+	 * Example:
+	 *   [1,2,3,4,6,7,9,11,12,13] => "1-4, 6-7, 9, 11-13"
+	 */
+	public static function formatPageRanges(array $pages): string
+	{
+		// If there are no pages, return an empty string
+		if (empty($pages)) {
+			return '';
+		}
+
+		// Sort the pages to ensure they are in order.
+		sort($pages);
+
+		// Initialize the start and end of the first range.
+		$start = $pages[0];
+		$end   = $pages[0];
+
+		$ranges = [];
+
+		// Iterate over the pages starting from the second element.
+		for($i = 1, $n = count($pages); $i < $n; $i++) {
+			$page = $pages[$i];
+
+			// If the page is a duplicate, skip it.
+			if ($page === $end) {
+				continue;
+			}
+
+			// Check if the current page continues the sequence.
+			if ($page === $end + 1) {
+				$end = $page;
+			} else {
+				// Finalize the current range.
+				if ($start === $end) {
+					$ranges[] = (string)$start;
+				} else {
+					$ranges[] = $start . '-' . $end;
+				}
+				// Start a new range.
+				$start = $page;
+				$end   = $page;
+			}
+		}
+
+		// Append the last range.
+		if ($start === $end) {
+			$ranges[] = (string)$start;
+		} else {
+			$ranges[] = $start . '-' . $end;
+		}
+
+		// Join the ranges into a single string separated by commas.
+		return implode(', ', $ranges);
+	}
 }
