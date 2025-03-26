@@ -46,20 +46,20 @@ abstract class ActionResource
 		$responseData = [];
 
 		foreach($data as $fieldName => $datum) {
+			$isCallable = !is_scalar($datum) && is_callable($datum);
+
 			// If the * special field is set, the field is automatically included
 			// If the field is explicitly set, either include or exclude based on the value
-			$includedField = $includeFields[$fieldName] ?? $includeFields['*'] ?? null;
-
+			$includedField = $includeFields[$fieldName] ?? $includeFields['*'] ?? !$isCallable;
+			
 			// If the field is not included, skip it
 			if ($includedField === false) {
 				continue;
 			}
 
 			// If the field is a callback, call it ONLY if it is explicitly included (do this recursively so child fields as well)
-			if (!is_scalar($datum) && is_callable($datum)) {
-				if ($includedField) {
-					$responseData[$fieldName] = $datum(is_array($includedField) ? $includedField : []);
-				}
+			if ($isCallable) {
+				$responseData[$fieldName] = $datum(is_array($includedField) ? $includedField : []);
 			} else {
 				$responseData[$fieldName] = $datum;
 			}
