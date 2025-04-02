@@ -153,6 +153,10 @@ class StoredFile extends Model implements AuditableContract
 			if (!$file->url) {
 				$file->url = $file->storageDisk()->url($file->filepath);
 			}
+
+			if ($file->url && !$file->size) {
+				$file->size = FileHelper::getRemoteFileSize($file->url);
+			}
 		});
 	}
 
