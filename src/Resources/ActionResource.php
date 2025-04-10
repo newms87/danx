@@ -9,10 +9,15 @@ use Illuminate\Database\Eloquent\Model;
 
 abstract class ActionResource
 {
-	public static string $type = '';
+	public static bool   $withTypedData = true;
+	public static string $type          = '';
 
 	public static function typedData(Model $model, array $responseData = []): array
 	{
+		if (!static::$withTypedData) {
+			return $responseData;
+		}
+
 		$type = static::$type ?: basename(preg_replace("#\\\\#", "/", static::class));
 
 		return [
@@ -51,7 +56,7 @@ abstract class ActionResource
 			// If the * special field is set, the field is automatically included
 			// If the field is explicitly set, either include or exclude based on the value
 			$includedField = $includeFields[$fieldName] ?? $includeFields['*'] ?? !$isCallable;
-			
+
 			// If the field is not included, skip it
 			if ($includedField === false) {
 				continue;
