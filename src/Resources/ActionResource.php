@@ -17,7 +17,7 @@ abstract class ActionResource
 		if (!static::$withTypedData) {
 			return $responseData;
 		}
-
+		
 		$type = static::$type ?: basename(preg_replace("#\\\\#", "/", static::class));
 
 		return [

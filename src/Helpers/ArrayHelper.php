@@ -136,7 +136,7 @@ class ArrayHelper
 	/**
 	 * Recursively removes duplicate values from an array
 	 */
-	public static function recursivelyUnique(array $array): array
+	public static function recursivelyUnique(array $array): mixed
 	{
 		foreach($array as $key => $value) {
 			if (is_array($value)) {
@@ -144,8 +144,20 @@ class ArrayHelper
 			}
 		}
 
-		if (!empty($array) && is_scalar(reset($array))) {
-			return array_unique($array, SORT_REGULAR);
+		if (!empty($array) && !is_associative_array($array) && (is_scalar(reset($array)) || reset($array) === null)) {
+			// Only unique entries
+			$array = array_unique($array, SORT_REGULAR);
+
+			// If there are non-null entries, clear out the null entries as these mean nothing
+			$array = array_filter($array, fn($i) => $i !== null);
+
+			// If the array only contains 1 item, we can reduce it into a scalar value
+			if (count($array) === 1) {
+				return reset($array);
+			}
+
+			// These are non-associative arrays, so make sure we're properly indexed
+			$array = array_values($array);
 		}
 
 		return $array;
