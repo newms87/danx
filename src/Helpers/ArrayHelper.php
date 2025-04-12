@@ -107,19 +107,65 @@ class ArrayHelper
 	}
 
 	/**
-	 * Merges two arrays recursively, with the values of the second array taking precedence over the first
+	 * TODO: Need to think about this more....
+	 *
+	 * This should recursively merge objects where they are the same, but if the objects differ, then they should be
+	 * placed in arrays of objects maybe? Should there be a more intelligent way to discover if an object should be
+	 * merged or concatenated?
 	 */
-	public static function mergeArraysRecursively($arr1, $arr2)
+	public static function WIP__mergeArraysRecursively($a1, $a2)
 	{
-		foreach($arr2 as $key => $value) {
-			if (is_array($value) && isset($arr1[$key]) && is_array($arr1[$key])) {
-				$arr1[$key] = self::mergeArraysRecursively($arr1[$key], $value);
+		foreach($a2 as $key => $value2) {
+			$value1 = $a1[$key] ?? null;
+
+			// Base case, if array 1 doesn't have the key, just set it to array 2
+			if ($value1 === null) {
+				$a1[$key] = $value2;
+				continue;
+			}
+
+			if ($value2 === null) {
+				// If array 2 has a null value, we don't want to overwrite the value in array 1
+				continue;
+			}
+
+			if (is_array($value1)) {
+				if (is_associative_array($value1)) {
+					if (is_associative_array($value2)) {
+						// Both are associative arrays, so treat them like objects and merge the objects into a list
+						$a1[$key] = [$value1, $value2];
+						continue;
+					}
+
+					// Type mismatch where array 1 is associative and array 2 is not,
+					// so treat value1 like an object and value 2 like a list of objects and merge the objects into a flat list
+					$a1[$key] = array_merge([$value1], $value2);
+					continue;
+				}
+
+				if (is_associative_array($value2)) {
+					// Type mismatch where array 1 is not associative and array 2 is,
+					// so treat value1 like a list of objects and value 2 like an object and merge the objects into a flat list
+					$a1[$key] = array_merge($value1, [$value2]);
+					continue;
+				}
+
+				// Both are non-associative arrays, so treat them like lists of objects and merge the objects into a flat list
+				$a1[$key] = array_merge($value1, $value2);
+				continue;
+			}
+
+			if (is_array($value2)) {
+				// Type mismatch where array 1 is not an array and array 2 is,
+				// so treat value1 like an object and value 2 like a list of objects and merge the objects into a flat list
+				$a1[$key] = array_merge([$value1], $value2);
 			} else {
-				$arr1[$key] = $value;
+				// Both values are scalar values, so merge them into a list
+				$a1[$key] = [$value1, $value2];
 			}
 		}
 
-		return $arr1;
+		return $a1;
 	}
 
 	/**
