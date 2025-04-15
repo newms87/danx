@@ -9,7 +9,7 @@ use GuzzleHttp\Exception\RequestException;
 use GuzzleHttp\HandlerStack;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Facades\Redis;
 use Newms87\Danx\Exceptions\ApiException;
 use Newms87\Danx\Exceptions\ApiRequestException;
 use Newms87\Danx\Helpers\ConsoleHelper;
@@ -175,7 +175,7 @@ abstract class Api
 	 *
 	 * @throws Exception
 	 */
-	public function throttle()
+	public function throttle(): void
 	{
 		if ($this->rateLimits) {
 			$serviceName = $this->getServiceName();
@@ -188,18 +188,38 @@ abstract class Api
 				if ($limit && $interval) {
 					$key = $serviceName . '-' . $limit . '-' . $interval . '-limiter';
 
-					// As soon as the rate timer is up, we can take our turn
-					while(RateLimiter::remaining($key, $limit) <= 0) {
+					// Lua script for atomic increment and expiry.
+					$luaScript = <<<LUA
+local current = redis.call("INCR", KEYS[1])
+if tonumber(current) == 1 then
+    redis.call("EXPIRE", KEYS[1], ARGV[1])
+end
+return current
+LUA;
+
+					while(true) {
+						// Use the eval method with an array of arguments and specify the number of keys.
+						// Here, $key is our single key (hence 1) and $interval is passed as an argument for the expiry.
+						$current = Redis::eval($luaScript, 1, $key, $interval);
+
+						// If within rate limits, proceed.
+						if ($current <= $limit) {
+							break;
+						}
+
+						// If no wait time is set, throw an exception immediately.
 						if (!$waitPerAttempt) {
 							throw new ApiException("Rate limit exceeded for $serviceName: $limit requests per $interval second(s)");
 						}
+
+						// Wait for the configured time (converted to microseconds) before trying again.
 						usleep($waitPerAttempt * 1000 * 1000);
 					}
-					RateLimiter::hit($key, $interval);
 				}
 			}
 		}
 	}
+
 
 	/**
 	 * @param array $options
