@@ -13,10 +13,10 @@ class LockException extends Exception
 	 * @param string|int     $key
 	 * @param Throwable|null $previous
 	 */
-	public function __construct(string|int $key, Throwable $previous = null)
+	public function __construct(string|int $key, int $waitTime, Throwable $previous = null)
 	{
 		$this->key = $key;
 
-		parent::__construct("Failed to acquire lock for $this->key", 401, $previous);
+		parent::__construct("Failed to acquire lock after {$waitTime}s for $this->key", 401, $previous);
 	}
 }

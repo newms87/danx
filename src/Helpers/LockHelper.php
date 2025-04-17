@@ -51,7 +51,7 @@ class LockHelper
 
 			// If we did not get the lock on the first attempt, block until we get the lock
 			if (!$firstLock) {
-				Log::debug("🟡🔒 WAIT: $key");
+				Log::debug("🟡🔒 WAIT: $key ($waitTime s)");
 				$blockAt = microtime(true);
 				$lock->block($waitTime);
 
@@ -66,7 +66,7 @@ class LockHelper
 			// Always refresh the model, so we can guarantee we have the latest data after acquiring the lock
 			$model?->refresh();
 		} catch(Throwable $exception) {
-			throw new LockException($key, $exception);
+			throw new LockException($key, $waitTime, $exception);
 		}
 
 		return true;
