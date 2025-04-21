@@ -80,7 +80,7 @@ class FileRepository
 		// Split out ext + name then limit the name to be 100 characters
 		$ext  = pathinfo($name, PATHINFO_EXTENSION);
 		$name = pathinfo($name, PATHINFO_FILENAME);
-		$name = StringHelper::limitText(100, $name, $ext);
+		$name = StringHelper::limitText(100, $name, '.' . $ext);
 
 		// Create a unique ID to avoid duplicating / overwriting existing files
 		$filepath = $path . '/' . uniqid() . '/' . $name;
