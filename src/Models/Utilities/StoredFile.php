@@ -14,6 +14,7 @@ use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Facades\Storage;
 use Newms87\Danx\Helpers\ArrayHelper;
 use Newms87\Danx\Helpers\FileHelper;
+use Newms87\Danx\Services\TranscodeFileService;
 use Newms87\Danx\Traits\SerializesDates;
 use Newms87\Danx\Traits\UuidModelTrait;
 use OwenIt\Auditing\Auditable;
@@ -145,19 +146,37 @@ class StoredFile extends Model implements AuditableContract
 	/**
 	 * Handle CUD events
 	 */
-	public static function boot()
+	public static function booted()
 	{
-		parent::boot();
-
-		static::saving(function (self $file) {
-			if (!$file->url) {
-				$file->url = $file->storageDisk()->url($file->filepath);
+		static::saving(function (StoredFile $storedFile) {
+			if (!$storedFile->url) {
+				$storedFile->url = $storedFile->storageDisk()->url($storedFile->filepath);
 			}
 
-			if ($file->url && !$file->size) {
-				$file->size = FileHelper::getRemoteFileSize($file->url);
+			if ($storedFile->url && !$storedFile->size) {
+				$storedFile->size = FileHelper::getRemoteFileSize($storedFile->url);
+			}
+
+			if ($storedFile->isDirty('meta') && $storedFile->meta && ($storedFile->meta['transcodes'] ?? false)) {
+				$storedFile->computeIsTranscoding();
 			}
 		});
+	}
+
+	public function computeIsTranscoding(): static
+	{
+		// Determine if there are still transcodes in progress
+		$isTranscoding = false;
+		foreach($this->meta['transcodes'] ?? [] as $transcodeItem) {
+			if (in_array($transcodeItem['status'], [TranscodeFileService::STATUS_IN_PROGRESS, TranscodeFileService::STATUS_PENDING])) {
+				$isTranscoding = true;
+				break;
+			}
+		}
+
+		$this->is_transcoding = $isTranscoding;
+
+		return $this;
 	}
 
 	public function originalFile(): StoredFile|BelongsTo
@@ -178,7 +197,7 @@ class StoredFile extends Model implements AuditableContract
 	 */
 	public function transcodes(): HasMany|StoredFile
 	{
-		return $this->hasMany(StoredFile::class, 'original_stored_file_id');
+		return $this->hasMany(StoredFile::class, 'original_stored_file_id')->orderBy('page_number');
 	}
 
 	/**

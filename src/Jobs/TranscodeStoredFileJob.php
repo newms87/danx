@@ -5,8 +5,7 @@ namespace Newms87\Danx\Jobs;
 use Newms87\Danx\Models\Utilities\StoredFile;
 use Newms87\Danx\Services\TranscodeFileService;
 
-class
-TranscodeStoredFileJob extends Job
+class TranscodeStoredFileJob extends Job
 {
 	protected StoredFile $storedFile;
 	protected string     $transcodeName;

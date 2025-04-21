@@ -2,10 +2,13 @@
 
 namespace Newms87\Danx\Services;
 
+use Exception;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\Log;
 use Newms87\Danx\Exceptions\ApiException;
+use Newms87\Danx\Jobs\TranscodeDataUrlToStoredFileJob;
 use Newms87\Danx\Jobs\TranscodeStoredFileJob;
+use Newms87\Danx\Models\Job\JobBatch;
 use Newms87\Danx\Models\Utilities\StoredFile;
 use Newms87\Danx\Repositories\FileRepository;
 use Newms87\Danx\Services\TranscodeFile\FileTranscoderAbstract;
@@ -17,6 +20,7 @@ class TranscodeFileService
 	const string
 		STATUS_PENDING = 'Pending',
 		STATUS_IN_PROGRESS = 'In Progress',
+		STATUS_TIMEOUT = 'Timeout',
 		STATUS_COMPLETE = 'Complete';
 
 	const string
@@ -66,6 +70,7 @@ class TranscodeFileService
 				'progress'     => 0,
 				'requested_at' => now(),
 				'started_at'   => null,
+				'timeout_at'   => now()->addSeconds($this->getTranscoder($transcodeName)->getTimeout($storedFile)),
 				'completed_at' => null,
 			],
 		])->save();
@@ -90,16 +95,50 @@ class TranscodeFileService
 
 		$this->start($storedFile, $transcodeName);
 
-		$transcodedFiles = $this->getTranscoder($transcodeName)->run($storedFile, $options);
+		$transcoder      = $this->getTranscoder($transcodeName);
+		$transcodedFiles = $transcoder->run($storedFile, $options);
 
-		foreach($transcodedFiles as $transcodedFile) {
-			$transcodedFile = $this->storeTranscodedFile($storedFile, $transcodeName, $transcodedFile['filename'], $transcodedFile['data'], $transcodedFile['page_number'] ?? null);
-			$transcodes->push($transcodedFile);
+		// If this service uses data URLs instead of the raw file data, we can run this in parallel and download the data from the URLs in a job instead of all in a single execution
+		if ($transcoder->usesDataUrls()) {
+			$batchJobs = [];
+			foreach($transcodedFiles as $transcodedFile) {
+				$batchJobs[] = (new TranscodeDataUrlToStoredFileJob($storedFile, $transcodeName, $transcodedFile));
+			}
+
+			$storedFileId = $storedFile->id;
+			JobBatch::createForJobs("Store transcoded files for $transcodeName", $batchJobs, function () use ($storedFileId, $transcodeName) {
+				app(TranscodeFileService::class)->complete(StoredFile::find($storedFileId), $transcodeName);
+			});
+		} else {
+			// if we are dealing with raw data, the data is already loaded into memory and needs to be saved to a file immediately all in one execution (too expensive and small savings to try to run in jobs in parallel)
+			foreach($transcodedFiles as $transcodedFile) {
+				$transcodedFile = $this->storeTranscodedFile($storedFile, $transcodeName, $transcodedFile['filename'], $transcodedFile['data'], $transcodedFile['page_number'] ?? null);
+				$transcodes->push($transcodedFile);
+			}
+
+			$this->complete($storedFile, $transcodeName);
 		}
 
-		$this->complete($storedFile, $transcodeName);
-
 		return $transcodes;
+	}
+
+	public function moveDataUrlToStoredFile(StoredFile $storedFile, string $transcodeName, array $transcodedFile): StoredFile
+	{
+		$filename   = $transcodedFile['filename'] ?? null;
+		$url        = $transcodedFile['url'] ?? null;
+		$pageNumber = $transcodedFile['page_number'] ?? null;
+
+		if (!$url) {
+			throw new Exception("Transcoded file does not have a URL");
+		}
+
+		if (!$filename) {
+			throw new Exception("Transcoded file does not have a filename");
+		}
+
+		$data = file_get_contents($url);
+
+		return $this->storeTranscodedFile($storedFile, $transcodeName, $filename, $data, $pageNumber);
 	}
 
 	/**
@@ -107,8 +146,9 @@ class TranscodeFileService
 	 */
 	public function start(StoredFile $storedFile, $transcodeName): void
 	{
-		$progress = $this->getTranscoder($transcodeName)->startingProgress($storedFile);
-		$estimate = $this->getTranscoder($transcodeName)->timeEstimate($storedFile);
+		$transcoder = $this->getTranscoder($transcodeName);
+		$progress   = $transcoder->startingProgress($storedFile);
+		$estimate   = $transcoder->timeEstimate($storedFile);
 
 		$storedFile->setMeta('transcodes', [
 			$transcodeName => [
@@ -116,6 +156,7 @@ class TranscodeFileService
 				'progress'     => $progress,
 				'estimate_ms'  => $estimate,
 				'started_at'   => now(),
+				'timeout_at'   => now()->addSeconds($this->getTranscoder($transcodeName)->getTimeout($storedFile)),
 				'completed_at' => null,
 			],
 		])->save();

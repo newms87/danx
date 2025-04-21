@@ -8,6 +8,7 @@ use Illuminate\Support\ServiceProvider;
 use Newms87\Danx\Console\Commands\DanxLinkCommand;
 use Newms87\Danx\Console\Commands\FixPermissions;
 use Newms87\Danx\Console\Commands\SyncDirtyJobsCommand;
+use Newms87\Danx\Console\Commands\TranscodeCleanCommand;
 use Newms87\Danx\Console\Commands\VaporDecryptCommand;
 use Newms87\Danx\Console\Commands\VaporEncryptCommand;
 use Newms87\Danx\Listeners\LogCommandExecution;
@@ -40,6 +41,7 @@ class DanxServiceProvider extends ServiceProvider
 				DanxLinkCommand::class,
 				FixPermissions::class,
 				SyncDirtyJobsCommand::class,
+				TranscodeCleanCommand::class,
 				VaporDecryptCommand::class,
 				VaporEncryptCommand::class,
 			]);

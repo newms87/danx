@@ -8,6 +8,16 @@ use Newms87\Danx\Models\Utilities\StoredFile;
 
 class PdfToImagesTranscoder extends FileTranscoderAbstract implements FileTranscoderContract
 {
+	public function usesDataUrls(): bool
+	{
+		return true;
+	}
+
+	public function getTimeout(StoredFile $storedFile): int
+	{
+		return $this->timeEstimate($storedFile) / 1000 * 2;
+	}
+
 	public function timeEstimate(StoredFile $storedFile): int
 	{
 		$MB = 1024 * 1024;
@@ -27,9 +37,15 @@ class PdfToImagesTranscoder extends FileTranscoderAbstract implements FileTransc
 		$transcodedFiles = [];
 
 		foreach($result['Files'] as $page => $image) {
+			$url = $image['Url'] ?? $image['FileUrl'] ?? null;
+
+			if (!$url) {
+				throw new ApiException("Convert API did not return a URL for PDF to Images transcode\n\n" . json_encode($image));
+			}
+			
 			$transcodedFiles[] = [
 				'filename'    => "Page " . ($page + 1) . " -- $image[FileName]",
-				'data'        => base64_decode($image['FileData']),
+				'url'         => $url,
 				'page_number' => $page + 1,
 			];
 		}

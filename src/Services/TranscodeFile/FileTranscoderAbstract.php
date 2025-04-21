@@ -25,4 +25,18 @@ abstract class FileTranscoderAbstract implements FileTranscoderContract
 		// 1 second per MB
 		return 5000 + ($storedFile->size / $MB * 5000);
 	}
+
+	public function usesDataUrls(): bool
+	{
+		return false;
+	}
+
+	/**
+	 * Returns the timeout in seconds
+	 * NOTE: The default timeout is 30 minutes
+	 */
+	public function getTimeout(StoredFile $storedFile): int
+	{
+		return 60 * 30;
+	}
 }

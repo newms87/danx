@@ -7,11 +7,11 @@ use Illuminate\Database\Eloquent\Model;
 use Newms87\Danx\Helpers\LockHelper;
 use Throwable;
 
-class Ref extends Model
+class ModelRef extends Model
 {
 	const int CREATE_RETRIES = 20;
 
-	protected $table    = 'refs';
+	protected $table    = 'model_refs';
 	protected $fillable = ['prefix', 'ref'];
 
 	/**
@@ -60,7 +60,7 @@ class Ref extends Model
 	protected static function getNextRefNumber($prefix, $minChars): string
 	{
 		$maxRef = self::where('prefix', $prefix)
-			->whereRaw('id = (SELECT MAX(id) FROM refs WHERE prefix = ?)', $prefix)
+			->whereRaw('id = (SELECT MAX(id) FROM model_refs WHERE prefix = ?)', $prefix)
 			->select('ref')
 			->first()?->ref ?: 0;
 		$number = (int)str_replace($prefix, '', $maxRef) + 1;

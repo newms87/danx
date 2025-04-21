@@ -89,6 +89,10 @@ class ConvertApi extends BearerTokenApi
 						'Url' => $url,
 					],
 				],
+				[
+					'Name'  => 'StoreFile',
+					'Value' => true,
+				],
 			],
 		];
 

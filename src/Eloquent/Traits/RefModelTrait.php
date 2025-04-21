@@ -2,8 +2,8 @@
 
 namespace Newms87\Danx\Eloquent\Traits;
 
-use Newms87\Danx\Models\Ref;
 use Illuminate\Database\Eloquent\Model;
+use Newms87\Danx\Models\ModelRef;
 use Throwable;
 
 /**
@@ -38,7 +38,7 @@ trait RefModelTrait
 	 */
 	public static function generateRef()
 	{
-		return Ref::generate(static::$refPrefix);
+		return ModelRef::generate(static::$refPrefix);
 	}
 
 	/**

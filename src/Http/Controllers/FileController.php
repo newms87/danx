@@ -4,6 +4,7 @@ namespace Newms87\Danx\Http\Controllers;
 
 use Exception;
 use Illuminate\Http\Request;
+use Newms87\Danx\Console\Commands\TranscodeCleanCommand;
 use Newms87\Danx\Exceptions\ValidationError;
 use Newms87\Danx\Models\Utilities\StoredFile;
 use Newms87\Danx\Repositories\FileRepository;
@@ -68,6 +69,8 @@ class FileController extends Controller
 	 */
 	public function refresh(StoredFile $storedFile)
 	{
+		app(TranscodeCleanCommand::class)->checkForTimeout($storedFile);
+
 		return StoredFileResource::details($storedFile);
 	}
 }

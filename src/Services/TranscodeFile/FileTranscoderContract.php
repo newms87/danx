@@ -23,4 +23,14 @@ interface FileTranscoderContract
 	 * Run the transcode and return an array of transcode files
 	 */
 	public function run(StoredFile $storedFile, array $options = []): array;
+
+	/**
+	 * Returns true if this transcode uses data URLs for the files instead of raw file data.
+	 */
+	public function usesDataUrls(): bool;
+
+	/**
+	 * Returns the timeout in seconds for this transcode
+	 */
+	public function getTimeout(StoredFile $storedFile): int;
 }
