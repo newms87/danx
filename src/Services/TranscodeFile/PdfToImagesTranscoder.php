@@ -15,7 +15,7 @@ class PdfToImagesTranscoder extends FileTranscoderAbstract implements FileTransc
 
 	public function getTimeout(StoredFile $storedFile): int
 	{
-		return $this->timeEstimate($storedFile) / 1000 * 2;
+		return $this->timeEstimate($storedFile) / 1000 * 3;
 	}
 
 	public function timeEstimate(StoredFile $storedFile): int
@@ -42,7 +42,7 @@ class PdfToImagesTranscoder extends FileTranscoderAbstract implements FileTransc
 			if (!$url) {
 				throw new ApiException("Convert API did not return a URL for PDF to Images transcode\n\n" . json_encode($image));
 			}
-			
+
 			$transcodedFiles[] = [
 				'filename'    => "Page " . ($page + 1) . " -- $image[FileName]",
 				'url'         => $url,
