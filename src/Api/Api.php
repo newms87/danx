@@ -238,7 +238,7 @@ LUA;
 			$options['headers'] = ($options['headers'] ?? []) + $this->getRequestHeaders();
 
 			$options['base_uri'] = $this->baseApiUrl ?: $this->getBaseApiUrl();
-			
+
 			// Apply the default timeout if not explicitly set in options
 			if (!isset($options['timeout'])) {
 				$options['timeout'] = $this->requestTimeout;
@@ -290,7 +290,6 @@ LUA;
 
 	public function handleResponse(RequestInterface $request, ResponseInterface $response): ResponseInterface
 	{
-		sleep(5);
 		static::$requestLog[] = [
 			'request'  => $request,
 			'response' => $response,

@@ -31,9 +31,13 @@ class ApiLog extends Model
 		'request_headers'  => 'json',
 		'response_headers' => 'json',
 		'stack_trace'      => 'json',
-		'started_at'       => 'datetime:Y-m-d H:i:s.v',
-		'finished_at'      => 'datetime:Y-m-d H:i:s.v',
+		'started_at'       => 'datetime',
 	];
+
+	public function getDateFormat(): string
+	{
+		return 'Y-m-d H:i:s.v';
+	}
 
 	/**
 	 * Adds an API log entry to the database.
