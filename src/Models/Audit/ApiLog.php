@@ -31,6 +31,8 @@ class ApiLog extends Model
 		'request_headers'  => 'json',
 		'response_headers' => 'json',
 		'stack_trace'      => 'json',
+		'started_at'       => 'datetime:Y-m-d H:i:s.v',
+		'finished_at'      => 'datetime:Y-m-d H:i:s.v',
 	];
 
 	/**
@@ -53,6 +55,7 @@ class ApiLog extends Model
 			'method'           => $request->getMethod(),
 			'request'          => static::parseBody($request),
 			'request_headers'  => $request->getHeaders(),
+			'started_at'       => now(),
 		]);
 
 		$request->getBody()->rewind();
@@ -73,6 +76,7 @@ class ApiLog extends Model
 			'response'         => static::parseBody($response),
 			'response_headers' => $response->getHeaders(),
 			'stack_trace'      => $response->getStatusCode() >= 400 ? debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS) : null,
+			'finished_at'      => now(),
 		]);
 
 		$response->getBody()->rewind();
