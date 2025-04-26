@@ -30,6 +30,9 @@ abstract class Api
 		// ['limit' => 5, 'interval' => 1, 'waitPerAttempt' => .5], // 5 requests per second, wait 1/2 second between attempts
 	];
 
+	// Default request timeout in seconds. Can be overridden in extending classes.
+	protected int $requestTimeout = 60;
+
 	const string
 		METHOD_DELETE = 'DELETE',
 		METHOD_GET = 'GET',
@@ -235,6 +238,11 @@ LUA;
 			$options['headers'] = ($options['headers'] ?? []) + $this->getRequestHeaders();
 
 			$options['base_uri'] = $this->baseApiUrl ?: $this->getBaseApiUrl();
+			
+			// Apply the default timeout if not explicitly set in options
+			if (!isset($options['timeout'])) {
+				$options['timeout'] = $this->requestTimeout;
+			}
 
 			$this->client = new Client($options);
 		}
