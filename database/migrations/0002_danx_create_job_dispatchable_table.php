@@ -18,7 +18,7 @@ return new class extends Migration {
 				$table->foreignId('job_dispatch_id')->constrained('job_dispatch')->cascadeOnDelete();
 				$table->string('category')->default('');
 				$table->string('model_type');
-				$table->uuid('model_id');
+				$table->unsignedBigInteger('model_id');
 				$table->timestamps();
 
 				$table->index(['model_type', 'model_id']);

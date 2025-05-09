@@ -36,6 +36,7 @@ class ActionRoute extends Route
 
 			// Actions
 			self::post('{id}/apply-action', fn($model, PagerRequest $request) => $controller->applyAction($controller->repo()->instance($model), $request))->name($name . '.apply-action');
+			self::post('apply-action', fn(PagerRequest $request) => $controller->applyAction(null, $request))->name($name . '.apply-action.create');
 			self::post('batch-action', [$controller::class, 'batchAction'])->name($name . '.batch-action');
 
 			// Custom routes
