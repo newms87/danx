@@ -25,8 +25,10 @@ return new class extends Migration {
 				$table->uuid('original_stored_file_id')->nullable();
 				$table->timestamps();
 				$table->timestamp('deleted_at')->nullable();
+			});
 
-				$table->foreign('original_stored_file_id')->references('id')->on('stored_files');
+			Schema::table('stored_files', function (Blueprint $table) {
+				$table->foreign('original_stored_file_id')->references('id')->on('stored_files')->nullOnDelete();
 			});
 		}
 

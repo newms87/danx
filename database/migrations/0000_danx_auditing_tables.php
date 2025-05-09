@@ -6,6 +6,8 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration {
 
+	public $withinTransaction = false;
+
 	public function up()
 	{
 		if (!Schema::hasTable('api_logs')) {
@@ -134,7 +136,7 @@ return new class extends Migration {
 				$table->dateTime('ran_at')->nullable();
 				$table->dateTime('completed_at')->nullable();
 				$table->dateTime('timeout_at')->nullable();
-				$table->integer('run_time')->nullable()->storedAs('timestampdiff(SECOND,`ran_at`,`completed_at`)');
+				$table->integer('run_time')->nullable()->storedAs('EXTRACT(EPOCH FROM (completed_at - ran_at))');
 				$table->unsignedInteger('count');
 				$table->timestamps();
 			});

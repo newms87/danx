@@ -15,8 +15,8 @@ return new class extends Migration {
 		if (!Schema::hasTable('job_dispatchables')) {
 			Schema::create('job_dispatchables', function (Blueprint $table) {
 				$table->id();
+				$table->foreignId('job_dispatch_id')->constrained('job_dispatch')->cascadeOnDelete();
 				$table->string('category')->default('');
-				$table->foreignId('job_dispatch_id')->constrained('job_dispatch');
 				$table->string('model_type');
 				$table->uuid('model_id');
 				$table->timestamps();
