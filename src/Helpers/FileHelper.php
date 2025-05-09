@@ -164,7 +164,7 @@ class FileHelper
 	 * @param int $firstContentRowIndex
 	 * @return array
 	 */
-	public static function parseCsvFile($file, int $headerRowIndex = 0, int $firstContentRowIndex = 1): array
+	public static function parseCsvFile($file, int $headerRowIndex = 0, int $firstContentRowIndex = 1, array $filterColumns = []): array
 	{
 		$rows          = [];
 		$columnHeaders = [];
@@ -184,7 +184,13 @@ class FileHelper
 
 					// Only add rows until we have reached an entirely empty row (then assume this is the end of the file)
 					if (array_filter($paddedRowData, fn($value) => $value !== '')) {
-						$rows[] = array_combine($columnHeaders, $paddedRowData);
+						$row = array_combine($columnHeaders, $paddedRowData);
+
+						if ($filterColumns) {
+							$row = array_intersect_key($row, array_flip($filterColumns));
+						}
+						
+						$rows[] = $row;
 					} else {
 						break;
 					}

@@ -43,65 +43,6 @@ class ErrorLog extends Model
 	];
 
 	/**
-	 * @param int                       $level
-	 * @param Throwable|Exception|Error $exception
-	 * @param array                     $data
-	 * @param ErrorLog|null             $parent
-	 * @return ErrorLog|null
-	 */
-	public static function logException(int $level, Throwable|Exception|Error $exception, array $data = [], ErrorLog $parent = null): ?ErrorLog
-	{
-		// Ignore logging INFO or lower
-		if ($level <= ErrorLog::INFO) {
-			return null;
-		}
-
-		// Override the exception logging level if it is set
-		if (isset($exception::$level)) {
-			$level = self::getLevelName($exception::$level);
-		}
-
-		$message = StringHelper::safeConvertToUTF8($exception->getMessage());
-
-		$errorLog = ErrorLog::make([
-			'error_class'        => $exception::class,
-			'code'               => $exception->getCode(),
-			'level'              => $level,
-			'message'            => substr($message, 0, self::MAX_MESSAGE_SIZE),
-			'file'               => $exception->getFile(),
-			'line'               => $exception->getLine(),
-			'stack_trace'        => self::getStackTrace($exception),
-			'last_seen_at'       => now(),
-			'count'              => 1,
-			'send_notifications' => true,
-		]);
-
-		// Attach the parent entry if one exists
-		if ($parent) {
-			$errorLog->parent()->associate($parent);
-			$errorLog->root()->associate($parent->root_id ?: $parent);
-		}
-
-		$errorLog = self::log($errorLog, $message, $data);
-
-		// If this is a new error log entry, lets map out the children
-		if ($previous = $exception->getPrevious()) {
-			self::logException($level, $previous, [], $errorLog);
-		}
-
-		if ($errorLog) {
-			Log::error(
-				$errorLog->level . " " . basename($errorLog) . " ($errorLog->code)\n\n" .
-				"$errorLog->message\n\n" .
-				"$errorLog->file:$errorLog->line" .
-				(config('danx.logging.output_exception_traces') ? "\n\n" . $exception->getTraceAsString() . "\n" : '')
-			);
-		}
-		
-		return $errorLog;
-	}
-
-	/**
 	 * @param $level
 	 * @return string
 	 */
@@ -157,6 +98,17 @@ class ErrorLog extends Model
 		return $trace;
 	}
 
+	public static function shouldLogErrors(): bool
+	{
+		$command = $_SERVER['argv'][1] ?? null;
+
+		if (app()->runningInConsole() && str_contains($command, 'migrate')) {
+			return false;
+		}
+
+		return true;
+	}
+
 	/**
 	 * @param int    $level
 	 * @param string $message
@@ -166,6 +118,10 @@ class ErrorLog extends Model
 	 */
 	public static function logErrorMessage(int $level, string $message, int $code = 0, array $data = []): ?ErrorLog
 	{
+		if (!static::shouldLogErrors()) {
+			return null;
+		}
+
 		// Ignore logging anything below ERROR level
 		if ($level < ErrorLog::ERROR) {
 			return null;
@@ -180,6 +136,69 @@ class ErrorLog extends Model
 		]);
 
 		return self::log($errorLog, $message, $data);
+	}
+
+	/**
+	 * @param int                       $level
+	 * @param Throwable|Exception|Error $exception
+	 * @param array                     $data
+	 * @param ErrorLog|null             $parent
+	 * @return ErrorLog|null
+	 */
+	public static function logException(int $level, Throwable|Exception|Error $exception, array $data = [], ErrorLog $parent = null): ?ErrorLog
+	{
+		if (!static::shouldLogErrors()) {
+			return null;
+		}
+
+		// Ignore logging INFO or lower
+		if ($level <= ErrorLog::INFO) {
+			return null;
+		}
+
+		// Override the exception logging level if it is set
+		if (isset($exception::$level)) {
+			$level = self::getLevelName($exception::$level);
+		}
+
+		$message = StringHelper::safeConvertToUTF8($exception->getMessage());
+
+		$errorLog = ErrorLog::make([
+			'error_class'        => $exception::class,
+			'code'               => $exception->getCode(),
+			'level'              => $level,
+			'message'            => substr($message, 0, self::MAX_MESSAGE_SIZE),
+			'file'               => $exception->getFile(),
+			'line'               => $exception->getLine(),
+			'stack_trace'        => self::getStackTrace($exception),
+			'last_seen_at'       => now(),
+			'count'              => 1,
+			'send_notifications' => true,
+		]);
+
+		// Attach the parent entry if one exists
+		if ($parent) {
+			$errorLog->parent()->associate($parent);
+			$errorLog->root()->associate($parent->root_id ?: $parent);
+		}
+
+		$errorLog = self::log($errorLog, $message, $data);
+
+		// If this is a new error log entry, lets map out the children
+		if ($previous = $exception->getPrevious()) {
+			self::logException($level, $previous, [], $errorLog);
+		}
+
+		if ($errorLog) {
+			Log::error(
+				$errorLog->level . " " . basename($errorLog) . " ($errorLog->code)\n\n" .
+				"$errorLog->message\n\n" .
+				"$errorLog->file:$errorLog->line" .
+				(config('danx.logging.output_exception_traces') ? "\n\n" . $exception->getTraceAsString() . "\n" : '')
+			);
+		}
+
+		return $errorLog;
 	}
 
 	/**
