@@ -145,8 +145,8 @@ class SortFilterServiceProvider extends ServiceProvider
 			$startKey = $builder->resolveColumnRelationshipAlias($startKey);
 			$endKey   = $builder->resolveColumnRelationshipAlias($endKey);
 
-			$startKeyRaw = $nullableDates ? DB::raw("IFNULL($startKey, $endKey)") : $startKey;
-			$endKeyRaw   = $nullableDates ? DB::raw("IFNULL($endKey, $startKey)") : $endKey;
+			$startKeyRaw = $nullableDates ? DB::raw("COALESCE($startKey, $endKey)") : $startKey;
+			$endKeyRaw   = $nullableDates ? DB::raw("COALESCE($endKey, $startKey)") : $endKey;
 
 			if (!empty($dates['='])) {
 				if (is_array($dates['=']) && count($dates['=']) > 1) {

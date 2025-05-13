@@ -18,7 +18,7 @@ class ModelRef extends Model
 	 * Generates a unique Reference # with the given prefix and a minimum ref # length of minChars + prefix length
 	 *
 	 * @param string $prefix
-	 * @param int    $minChars
+	 *param int    $minChars
 	 * @return string
 	 *
 	 * @throws Throwable
@@ -60,7 +60,7 @@ class ModelRef extends Model
 	protected static function getNextRefNumber($prefix, $minChars): string
 	{
 		$maxRef = self::where('prefix', $prefix)
-			->whereRaw('id = (SELECT MAX(id) FROM model_refs WHERE prefix = ?)', $prefix)
+			->whereRaw('id = (SELECT MAX(id) FROM model_refs WHERE prefix = ?)', [$prefix])
 			->select('ref')
 			->first()?->ref ?: 0;
 		$number = (int)str_replace($prefix, '', $maxRef) + 1;

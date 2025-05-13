@@ -22,7 +22,7 @@ class DatabaseHelper
 
 		$keys = implode(',', array_keys($records[0]));
 
-		$sql = "INSERT INTO `$table` ($keys) VALUES ";
+		$sql = "INSERT INTO \"$table\" ($keys) VALUES ";
 
 		$count  = 0;
 		$values = '';
@@ -73,11 +73,11 @@ class DatabaseHelper
 
 		foreach($records[0] as $key => $value) {
 			if ($key !== 'id') {
-				$keysStr .= ($keysStr ? ',' : '') . "`$key` = :$key";
+				$keysStr .= ($keysStr ? ',' : '') . "\"$key\" = :$key";
 			}
 		}
 
-		$sth = $pdo->prepare("UPDATE `$table` SET $keysStr WHERE `id` = :id");
+		$sth = $pdo->prepare("UPDATE \"$table\" SET $keysStr WHERE \"id\" = :id");
 
 		foreach($records as $record) {
 			$sth->execute($record);
