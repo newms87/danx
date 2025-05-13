@@ -11,7 +11,7 @@ class AppVersionMiddleware
 	{
 		$response = $next($request);
 
-		if (config('app.version')) {
+		if (config('app.version') && method_exists($response, 'header')) {
 			$response->header('X-App-Version', config('app.version'));
 
 			// Append to Access-Control-Expose-Headers to expose the custom header
