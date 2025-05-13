@@ -12,8 +12,10 @@ use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Facades\Storage;
+use Newms87\Danx\Events\StoredFileUpdatedEvent;
 use Newms87\Danx\Helpers\ArrayHelper;
 use Newms87\Danx\Helpers\FileHelper;
+use Newms87\Danx\Jobs\Job;
 use Newms87\Danx\Services\TranscodeFileService;
 use Newms87\Danx\Traits\SerializesDates;
 use Newms87\Danx\Traits\UuidModelTrait;
@@ -159,6 +161,21 @@ class StoredFile extends Model implements AuditableContract
 
 			if ($storedFile->isDirty('meta') && $storedFile->meta && ($storedFile->meta['transcodes'] ?? false)) {
 				$storedFile->computeIsTranscoding();
+			}
+		});
+
+		static::saved(function (StoredFile $storedFile) {
+			// If the file's transcoding status or other important attributes changed,
+			// broadcast the update via websocket instead of relying on polling
+			if ($storedFile->wasChanged(['url', 'size', 'meta', 'page_number', 'is_transcoding', 'original_stored_file_id'])) {
+				// If this is already running inside a job, broadcast immediately for better UX
+				// and to not waste resource spinning up another job
+				if (Job::$runningJob) {
+					StoredFileUpdatedEvent::broadcast($storedFile);
+				} else {
+					// Otherwise queue the broadcast
+					StoredFileUpdatedEvent::dispatch($storedFile);
+				}
 			}
 		});
 	}
