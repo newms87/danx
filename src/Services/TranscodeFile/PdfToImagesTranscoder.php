@@ -15,7 +15,7 @@ class PdfToImagesTranscoder extends FileTranscoderAbstract implements FileTransc
 
 	public function getTimeout(StoredFile $storedFile): int
 	{
-		return $this->timeEstimate($storedFile) / 1000 * 3;
+		return (int)($this->timeEstimate($storedFile) / 1000 * 3);
 	}
 
 	public function timeEstimate(StoredFile $storedFile): int

@@ -111,7 +111,12 @@ class AuditDriver implements AuditDriverContract
 	 */
 	public static function getAuditRequestOrIgnore()
 	{
-		if (!self::$auditRequest && app()->runningInConsole()) {
+		$blockList = [
+			'*/audit*',
+			'*__clockwork*',
+		];
+		
+		if (!self::$auditRequest && (app()->runningInConsole() || request()->fullUrlIs($blockList))) {
 			return null;
 		}
 
