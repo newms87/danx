@@ -33,6 +33,6 @@ class StoredFileUpdatedEvent extends ModelSavedEvent
 
 	public function data(): array
 	{
-		return StoredFileResource::make($this->storedFile, ['thumb' => true, 'transcodes' => true]);
+		return StoredFileResource::make($this->storedFile, ['thumb' => true]);
 	}
 }

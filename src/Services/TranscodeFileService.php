@@ -75,7 +75,7 @@ class TranscodeFileService
 			],
 		])->save();
 
-		return (new TranscodeStoredFileJob($storedFile, $transcodeName, $options))->dispatch();
+		return (new TranscodeStoredFileJob($storedFile, $transcodeName))->dispatch();
 	}
 
 	/**
