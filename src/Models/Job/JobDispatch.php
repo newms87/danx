@@ -44,13 +44,6 @@ class JobDispatch extends Model
 		'data'         => 'json',
 	];
 
-	protected array $virtual = [
-		'run_time' => [
-			'ran_at',
-			'completed_at',
-		],
-	];
-
 	public function user(): BelongsTo
 	{
 		return $this->belongsTo(config('auth.providers.users.model'));
@@ -109,5 +102,16 @@ class JobDispatch extends Model
 		$createdAt = DateHelper::formatDateTime($this->created_at);
 
 		return "<JobDispatch $this->id ($this->ref) status='$this->status' count='$this->count' tag='$this->job_tag' created='$createdAt'>";
+	}
+
+	public static function booted()
+	{
+		static::saving(function (JobDispatch $jobDispatch) {
+			if ($jobDispatch->isDirty(['completed_at', 'ran_at'])) {
+				$jobDispatch->run_time_ms = $jobDispatch->completed_at && $jobDispatch->ran_at
+					? $jobDispatch->ran_at->diffInMilliseconds($jobDispatch->completed_at)
+					: null;
+			}
+		});
 	}
 }

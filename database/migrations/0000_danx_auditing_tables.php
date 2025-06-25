@@ -26,7 +26,7 @@ return new class extends Migration {
 				$table->json('request_headers')->nullable();
 				$table->json('response_headers')->nullable();
 				$table->json('stack_trace')->nullable();
-				$table->timestamps();
+				$table->timestamps(3);
 
 				$table->index(['api_class', 'status_code', 'method']);
 				$table->index(['service_name', 'status_code', 'method']);
@@ -45,7 +45,7 @@ return new class extends Migration {
 				$table->text('logs')->nullable();
 				$table->text('profile')->nullable();
 				$table->double('time');
-				$table->timestamps();
+				$table->timestamps(3);
 			});
 		}
 
@@ -60,7 +60,7 @@ return new class extends Migration {
 				$table->json('old_values');
 				$table->json('new_values');
 				$table->text('tags')->nullable();
-				$table->timestamps();
+				$table->timestamps(3);
 
 				$table->index(['auditable_type', 'auditable_id']);
 				$table->index(['user_id']);
@@ -133,10 +133,10 @@ return new class extends Migration {
 				$table->unsignedInteger('running_audit_request_id')->nullable();
 				$table->unsignedInteger('dispatch_audit_request_id')->nullable();
 				$table->string('status');
-				$table->dateTime('ran_at')->nullable();
-				$table->dateTime('completed_at')->nullable();
-				$table->dateTime('timeout_at')->nullable();
-				$table->integer('run_time')->nullable()->storedAs('EXTRACT(EPOCH FROM (completed_at - ran_at))');
+				$table->dateTime('ran_at', 3)->nullable();
+				$table->dateTime('completed_at', 3)->nullable();
+				$table->dateTime('timeout_at', 3)->nullable();
+				$table->integer('run_time_ms')->nullable();
 				$table->unsignedInteger('count');
 				$table->timestamps();
 			});

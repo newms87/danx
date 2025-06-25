@@ -4,7 +4,6 @@
 namespace Newms87\Danx\Resources;
 
 use Exception;
-use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
 
 abstract class ActionResource
@@ -17,7 +16,7 @@ abstract class ActionResource
 		if (!static::$withTypedData) {
 			return $responseData;
 		}
-		
+
 		$type = static::$type ?: basename(preg_replace("#\\\\#", "/", static::class));
 
 		return [
@@ -73,7 +72,7 @@ abstract class ActionResource
 		return static::typedData($model, $responseData);
 	}
 
-	public static function collection(Collection|array|null $collection, array $includeFields = [])
+	public static function collection($collection, array $includeFields = [])
 	{
 		if (!$collection) {
 			return [];
