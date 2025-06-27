@@ -18,10 +18,10 @@ use Throwable;
 abstract class ActionController extends Controller
 {
 	/** @var string|ActionRepository Set to the model's repository */
-	public static string $repo;
+	public static ?string $repo = null;
 
 	/** @var string|ActionResource Set to the resource class for the model */
-	public static ?string $resource;
+	public static ?string $resource = null;
 
 	public function __construct()
 	{

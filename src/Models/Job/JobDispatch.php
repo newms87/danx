@@ -6,12 +6,9 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Newms87\Danx\Helpers\DateHelper;
 use Newms87\Danx\Models\Audit\AuditRequest;
-use Newms87\Danx\Traits\HasVirtualFields;
 
 class JobDispatch extends Model
 {
-	use HasVirtualFields;
-
 	const string
 		STATUS_PENDING = 'Pending',
 		STATUS_RUNNING = 'Running',
