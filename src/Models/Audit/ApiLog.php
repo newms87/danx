@@ -81,11 +81,34 @@ class ApiLog extends Model
 			'response_headers' => $response->getHeaders(),
 			'stack_trace'      => $response->getStatusCode() >= 400 ? debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS) : null,
 			'finished_at'      => now(),
+			'run_time_ms'      => ($apiLog->started_at ?? now())->diffInMilliseconds(now()),
 		]);
 
 		$response->getBody()->rewind();
 
 		return $apiLog;
+	}
+
+
+	/**
+	 * Log API request completion (for any non-timeout error)
+	 * Ensures finished_at is always set for proper run_time_ms calculation
+	 */
+	public static function logResponseError(ApiLog $apiLog, Exception $exception, $errorType = 'request_error'): void
+	{
+		Log::error('Request Failed: ' . StringHelper::logSafeString($exception->getMessage()));
+
+		$apiLog->update([
+			'status_code' => $exception->getResponse()?->getStatusCode() ?? 0,
+			'finished_at' => now(),
+			'run_time_ms' => ($apiLog->started_at ?? now())->diffInMilliseconds(now()),
+			'response'    => [
+				'error_type'    => $errorType,
+				'error_message' => $exception->getMessage(),
+				'has_response'  => $exception->hasResponse(),
+			],
+			'stack_trace' => debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS),
+		]);
 	}
 
 	/**

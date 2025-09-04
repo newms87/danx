@@ -4,6 +4,7 @@ namespace Newms87\Danx\Api;
 
 use Exception;
 use GuzzleHttp\Client;
+use GuzzleHttp\Exception\ConnectException;
 use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Exception\RequestException;
 use GuzzleHttp\HandlerStack;
@@ -554,11 +555,25 @@ LUA;
 				]
 			);
 		} catch(RequestException $exception) {
+			$isTimeout = $this->isTimeoutException($exception);
+
+			if ($this->currentApiLog) {
+				ApiLog::logResponseError($this->currentApiLog, $exception, $isTimeout ? 'timeout' : 'request_error');
+			}
+
+			// Handle timeout-specific errors first (both ConnectException and RequestException)
+			if ($isTimeout) {
+				throw new ApiRequestException(
+					$this->getServiceName(),
+					$exception,
+					'Request timed out'
+				);
+			}
+
 			throw new ApiRequestException(
 				$this->getServiceName(),
 				$exception,
-				'',
-				$this->currentApiLog
+				''
 			);
 		}
 
@@ -655,5 +670,22 @@ LUA;
 	public function getRawContent()
 	{
 		return $this->rawContent;
+	}
+
+	/**
+	 * Check if an exception is a timeout error
+	 * Based on Guzzle best practices: ConnectException for connection timeouts,
+	 * RequestException without response for request timeouts
+	 */
+	private function isTimeoutException(RequestException $exception): bool
+	{
+		// ConnectException typically indicates connection timeout (among other connection issues)
+		if (!$exception->hasResponse() || $exception instanceof ConnectException) {
+			// Additional check for timeout-specific errors in ConnectException
+			return preg_match("/(time out|timed out|timeout)/", $exception->getMessage()) ||
+				str_contains($exception->getMessage(), 'cURL error 28');
+		}
+
+		return false;
 	}
 }
