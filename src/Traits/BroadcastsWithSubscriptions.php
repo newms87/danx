@@ -43,7 +43,14 @@ trait BroadcastsWithSubscriptions
         $userIds     = array_merge($userIds, $filterUsers);
 
         // Deduplicate and return
-        return array_unique($userIds);
+        $uniqueUserIds = array_unique($userIds);
+
+        // Single consolidated log entry
+        if (!empty($uniqueUserIds)) {
+            static::logDebug("Broadcasting {$resourceType}:{$model->id} to " . count($uniqueUserIds) . ' subscriber(s)');
+        }
+
+        return $uniqueUserIds;
     }
 
     /**

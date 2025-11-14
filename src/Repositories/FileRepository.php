@@ -32,6 +32,7 @@ class FileRepository
 		}
 
 		$options += [
+			'team_id'  => team()?->id,
 			'disk'     => $disk,
 			'filepath' => $filepath,
 			'filename' => basename($filepath),
@@ -90,6 +91,7 @@ class FileRepository
 		}
 
 		$storedFile = StoredFile::create([
+			'team_id'  => team()?->id,
 			'disk'     => config('filesystems.default'),
 			'filepath' => $filepath,
 			'filename' => $name,
@@ -284,6 +286,7 @@ class FileRepository
 		}
 
 		return StoredFile::create([
+			'team_id'  => team()?->id,
 			'disk'     => $disk,
 			'filepath' => $storedPath,
 			'filename' => $name,

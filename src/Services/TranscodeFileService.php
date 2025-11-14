@@ -37,6 +37,7 @@ class TranscodeFileService
 		$dir                                     = $storedFile->id;
 		$filepath                                = "transcodes/$transcodeName/$dir/$filename";
 		$transcodedFile                          = app(FileRepository::class)->createFileWithContents($filepath, $data);
+		$transcodedFile->team_id                 = $storedFile->team_id;
 		$transcodedFile->original_stored_file_id = $storedFile->id;
 		$transcodedFile->transcode_name          = $transcodeName;
 		$transcodedFile->page_number             = $pageNumber ?? $storedFile->page_number;

@@ -87,6 +87,32 @@ class JobDispatch extends Model
 		return $this->belongsTo(AuditRequest::class, 'dispatch_audit_request_id');
 	}
 
+	/**
+	 * Get the team_id from the first dispatchable model that has a team_id
+	 * JobDispatch can be attached to multiple models via job_dispatchables pivot table
+	 */
+	public function getTeamIdAttribute(): ?string
+	{
+		// Query the pivot table to find any model with team_id
+		$dispatchable = \DB::table('job_dispatchables')
+			->where('job_dispatch_id', $this->id)
+			->first();
+
+		if (!$dispatchable) {
+			return null;
+		}
+
+		// Load the actual model to get its team_id
+		$modelClass = $dispatchable->model_type;
+		if (!class_exists($modelClass)) {
+			return null;
+		}
+
+		$model = $modelClass::find($dispatchable->model_id);
+
+		return $model?->team_id ?? null;
+	}
+
 	public static function incrementCount(string $ref): void
 	{
 		JobDispatch::where('ref', $ref)
