@@ -53,7 +53,10 @@ class FileRepository
 			$options['filepath'] = StringHelper::limitText(768, $path, $options['filename']);
 		}
 
-		return StoredFile::create($options);
+		$storedFile = new StoredFile();
+		$storedFile->forceFill($options)->save();
+
+		return $storedFile;
 	}
 
 	/**
@@ -90,8 +93,10 @@ class FileRepository
 			$mime = FileHelper::getMimeFromExtension($name);
 		}
 
-		$storedFile = StoredFile::create([
+		$storedFile = new StoredFile();
+		$storedFile->forceFill([
 			'team_id'  => team()?->id,
+			'user_id'  => user()?->id,
 			'disk'     => config('filesystems.default'),
 			'filepath' => $filepath,
 			'filename' => $name,
@@ -99,6 +104,7 @@ class FileRepository
 			'meta'     => $meta ?: [],
 			'size'     => 0,
 		]);
+		$storedFile->save(); // Save first to get ID for route generation
 
 		// The URL can be a presigned URL in the case of s3 bucket uploads, so a use can upload directly to s3,
 		// Otherwise the URL should just be
@@ -108,7 +114,7 @@ class FileRepository
 			$storedFile->url = route('file.upload-presigned-url-contents', ['storedFile' => $storedFile->id]);
 		}
 
-		$storedFile->save();
+		$storedFile->save(); // Save again to persist URL
 
 		return $storedFile;
 	}
@@ -202,7 +208,10 @@ class FileRepository
 		} catch(Exception $e) {
 		}
 
-		$file = StoredFile::make([
+		$file = new StoredFile();
+		$file->forceFill([
+			'team_id'  => team()?->id,
+			'user_id'  => user()?->id,
 			'disk'     => config('filesystems.default'),
 			'filepath' => $filepath,
 			'filename' => $name,
@@ -285,14 +294,19 @@ class FileRepository
 			throw new FileException('Could not store file.');
 		}
 
-		return StoredFile::create([
+		$storedFile = new StoredFile();
+		$storedFile->forceFill([
 			'team_id'  => team()?->id,
+			'user_id'  => user()?->id,
 			'disk'     => $disk,
 			'filepath' => $storedPath,
 			'filename' => $name,
 			'mime'     => $file->getMimeType(),
 			'size'     => $file->getSize(),
 		]);
+		$storedFile->save();
+
+		return $storedFile;
 	}
 
 	/**
