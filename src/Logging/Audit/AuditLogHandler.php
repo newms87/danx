@@ -46,7 +46,7 @@ class AuditLogHandler extends AbstractProcessingHandler
 				$entry     = "\n$timestamp $level $message";
 
 				// DO NOT save here, the logs will be written when the terminate event is fired
-				$auditRequest->logs = StringHelper::logSafeString($auditRequest->logs . $entry, 65000);
+				$auditRequest->logs = StringHelper::logSafeString($auditRequest->logs . $entry, 1000000);
 
 				// Make an exception for running jobs to ensure we're getting logging leading up to an error
 				$auditRequest->save();
