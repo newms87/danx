@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\Log;
 use Newms87\Danx\Audit\AuditDriver;
 use Newms87\Danx\Helpers\StringHelper;
+use Newms87\Danx\Services\Error\RetryableErrorChecker;
 use Throwable;
 
 class ErrorLog extends Model
@@ -135,7 +136,7 @@ class ErrorLog extends Model
 			'send_notifications' => true,
 		]);
 
-		return self::log($errorLog, $message, $data);
+		return self::log($errorLog, $message, $data, false);
 	}
 
 	/**
@@ -182,7 +183,10 @@ class ErrorLog extends Model
 			$errorLog->root()->associate($parent->root_id ?: $parent);
 		}
 
-		$errorLog = self::log($errorLog, $message, $data);
+		// Check if the exception is retryable
+		$isRetryable = RetryableErrorChecker::isRetryable($exception);
+
+		$errorLog = self::log($errorLog, $message, $data, $isRetryable);
 
 		// If this is a new error log entry, lets map out the children
 		if ($previous = $exception->getPrevious()) {
@@ -205,9 +209,10 @@ class ErrorLog extends Model
 	 * @param ErrorLog $errorLog
 	 * @param string   $message
 	 * @param array    $data
+	 * @param bool     $isRetryable
 	 * @return ErrorLog|null
 	 */
-	public static function log(ErrorLog $errorLog, string $message, array $data = []): ?ErrorLog
+	public static function log(ErrorLog $errorLog, string $message, array $data = [], bool $isRetryable = false): ?ErrorLog
 	{
 		$errorLog->hash = $errorLog->generateHash();
 
@@ -231,7 +236,7 @@ class ErrorLog extends Model
 			return null;
 		}
 
-		$errorLog->addEntry($message, $data);
+		$errorLog->addEntry($message, $data, $isRetryable);
 
 		return $errorLog;
 	}
@@ -239,7 +244,7 @@ class ErrorLog extends Model
 	/**
 	 * @param null $data
 	 */
-	public function addEntry($message, $data = null): void
+	public function addEntry($message, $data = null, bool $isRetryable = false): void
 	{
 		$message = StringHelper::logSafeString($message, self::MAX_FULL_MESSAGE_SIZE);
 
@@ -249,6 +254,7 @@ class ErrorLog extends Model
 			'message'          => substr($message, 0, self::MAX_MESSAGE_SIZE),
 			'full_message'     => $message,
 			'data'             => $data ?: null,
+			'is_retryable'     => $isRetryable,
 		]);
 	}
 

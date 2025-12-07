@@ -16,7 +16,8 @@ class ErrorLogEntry extends Model
 	];
 
 	protected $casts = [
-		'data' => 'json',
+		'data'         => 'json',
+		'is_retryable' => 'boolean',
 	];
 
 	/**
