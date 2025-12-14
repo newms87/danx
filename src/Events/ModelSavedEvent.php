@@ -109,6 +109,9 @@ abstract class ModelSavedEvent implements ShouldBroadcast
         $data = $this->data();
         Cache::lock(static::lockKey($this->model))->forceRelease();
 
+        // Include the user who triggered this event so frontend can filter out own events
+        $data['triggered_by_user_id'] = auth()->id();
+
         return $data;
     }
 
