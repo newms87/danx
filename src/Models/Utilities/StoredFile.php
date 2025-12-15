@@ -385,6 +385,30 @@ class StoredFile extends Model implements AuditableContract
 	}
 
 	/**
+	 * Get text content from all text transcodes as an associative array.
+	 *
+	 * @return array<string, string> Array where key is transcode_name and value is content
+	 */
+	public function getTextTranscodesContent(): array
+	{
+		$textTranscodes = $this->transcodes()->where('mime', self::MIME_TEXT)->get();
+
+		if ($textTranscodes->isEmpty()) {
+			return [];
+		}
+
+		$output = [];
+		foreach ($textTranscodes as $transcode) {
+			$content = $transcode->getContents();
+			if ($content) {
+				$output[$transcode->transcode_name] = $content;
+			}
+		}
+
+		return $output;
+	}
+
+	/**
 	 * @return string
 	 */
 	public function __toString()
