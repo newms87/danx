@@ -199,21 +199,35 @@ abstract class Job implements ShouldQueue
 		// Let other parts of the system know we're running inside a Job
 		self::$isRunning = true;
 
-		// Load the jobDispatch record immediately, so we can associate the same audit request entry for subsequent jobs
-		foreach($values as $value) {
+		// Load the jobDispatch record immediately
+		foreach ($values as $value) {
 			if ($value instanceof ModelIdentifier) {
 				if ($value->class === JobDispatch::class) {
-					$this->jobDispatch         = JobDispatch::find($value->id);
-					self::$runningJob          = $this->jobDispatch;
-					AuditDriver::$auditRequest = $this->jobDispatch->runningAuditRequest ?? AuditDriver::getAuditRequest();
-
-					// Associate the Job dispatch to the running audit request
-					if (AuditDriver::$auditRequest) {
-						$this->jobDispatch?->update(['running_audit_request_id' => AuditDriver::$auditRequest?->id]);
-					}
+					$this->jobDispatch = JobDispatch::find($value->id);
+					self::$runningJob  = $this->jobDispatch;
 					break;
 				}
 			}
+		}
+
+		// Set up user/team context BEFORE creating AuditRequest
+		// This ensures team() returns the correct team when AuditRequest is created
+		$user = $this->jobDispatch?->user()->first();
+		if ($user) {
+			Auth::guard()->setUser($user);
+			// Set the team context from the job dispatch
+			$user->currentTeam = team($this->jobDispatch->team_id);
+		} elseif (self::$logoutUser) {
+			// Be sure to log out any previous user in case the same Job Runner instance had been authenticated
+			Auth::guard()->forgetUser();
+		}
+
+		// NOW create/get AuditRequest (team() will work correctly)
+		AuditDriver::$auditRequest = $this->jobDispatch?->runningAuditRequest ?? AuditDriver::getAuditRequest();
+
+		// Associate the Job dispatch to the running audit request
+		if (AuditDriver::$auditRequest) {
+			$this->jobDispatch?->update(['running_audit_request_id' => AuditDriver::$auditRequest?->id]);
 		}
 
 		$properties = (new ReflectionClass($this))->getProperties();
@@ -224,7 +238,7 @@ abstract class Job implements ShouldQueue
 			Log::debug("Unserializing Job " . static::class . " ({$this->jobDispatch?->id})");
 		}
 
-		foreach($properties as $property) {
+		foreach ($properties as $property) {
 			if ($property->isStatic()) {
 				continue;
 			}
@@ -252,7 +266,7 @@ abstract class Job implements ShouldQueue
 				}
 				// Unnecessary overhead to load all the relationships up front - let them be lazy loaded
 				unset($values[$name]->relations);
-			} catch(Throwable $e) {
+			} catch (Throwable $e) {
 				// fail silently
 			}
 
@@ -265,16 +279,6 @@ abstract class Job implements ShouldQueue
 		}
 
 		AuditDriver::$auditRequest?->update(['request' => $values]);
-
-		$user = $this->jobDispatch?->user()->first();
-
-		// Spoof this Job to run as the authenticated user who dispatched the job
-		if ($user) {
-			Auth::guard()->setUser($user);
-		} elseif (self::$logoutUser) {
-			// Be sure to log out any previous user in case the same Job Runner instance had been authenticated
-			Auth::guard()->forgetUser();
-		}
 	}
 
 	/**
@@ -388,9 +392,11 @@ abstract class Job implements ShouldQueue
 			}
 			throw $exception;
 		} finally {
-
 			// Signal that this audit request is complete (Jobs run in app instances that do not terminate after every job)
 			AuditDriver::terminate();
+
+			// Reset the running job reference so subsequent code doesn't think we're still in a job
+			self::$runningJob = null;
 		}
 	}
 

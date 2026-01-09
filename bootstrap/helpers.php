@@ -113,3 +113,46 @@ if (!function_exists('now_ms')) {
 		return now()->format('Y-m-d H:i:s.u');
 	}
 }
+
+if (!function_exists('team')) {
+	/**
+	 * Returns the current team context, or resolves a team by ID if provided
+	 */
+	function team($teamId = null): ?object
+	{
+		$teamClass = config('danx.models.team', \Newms87\Danx\Models\Team\Team::class);
+
+		// If a team ID is provided, resolve and return that team directly
+		if ($teamId) {
+			return $teamClass ? $teamClass::find($teamId) : null;
+		}
+
+		$user = user();
+
+		if (!$user) {
+			return null;
+		}
+
+		if (\Newms87\Danx\Jobs\Job::$runningJob) {
+			$teamId = \Newms87\Danx\Jobs\Job::$runningJob->team_id;
+			if ($teamId && $user->currentTeam?->id !== $teamId) {
+				$user->currentTeam = $teamClass::find($teamId);
+			}
+		}
+
+		// Fallback: if currentTeam still not set, try token or user's teams
+		if (!$user->currentTeam) {
+			$token = $user->currentAccessToken();
+
+			// The token name matches the name of the team the user is authorized to access
+			// TransientToken (used in tests) doesn't have a name property
+			if ($token && $token instanceof \Laravel\Sanctum\PersonalAccessToken) {
+				$user->setCurrentTeam($token->name);
+			} elseif (method_exists($user, 'teams')) {
+				$user->setCurrentTeam($user->teams()->first()?->uuid);
+			}
+		}
+
+		return $user->currentTeam;
+	}
+}

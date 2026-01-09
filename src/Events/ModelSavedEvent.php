@@ -59,21 +59,27 @@ abstract class ModelSavedEvent implements ShouldBroadcast
 
     /**
      * Broadcast the event for a model
+     *
+     * @param  Model  $model  The model instance
+     * @param  string|null  $event  Optional event type override ('created', 'updated', 'deleted')
      */
-    public static function broadcast(Model $model): void
+    public static function broadcast(Model $model, ?string $event = null): void
     {
-        broadcast(new static($model, static::getEvent($model)));
+        broadcast(new static($model, $event ?? static::getEvent($model)));
     }
 
     /**
      * Dispatch the event with a lock to prevent duplicate broadcasts
+     *
+     * @param  Model  $model  The model instance
+     * @param  string|null  $event  Optional event type override ('created', 'updated', 'deleted')
      */
-    public static function dispatch(Model $model): void
+    public static function dispatch(Model $model, ?string $event = null): void
     {
         $lock = Cache::lock(static::lockKey($model), 5);
 
         if ($lock->get()) {
-            event(new static($model, static::getEvent($model)));
+            event(new static($model, $event ?? static::getEvent($model)));
         }
     }
 

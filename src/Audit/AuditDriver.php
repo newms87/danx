@@ -243,6 +243,7 @@ class AuditDriver implements AuditDriverContract
 				self::$auditRequest = AuditRequest::create([
 					'session_id'  => self::getSessionUuid(),
 					'user_id'     => user()?->id,
+					'team_id'     => team()?->id,
 					'environment' => app()->environment(),
 					'url'         => $url,
 					'request'     => self::getRequest(),

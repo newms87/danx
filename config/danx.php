@@ -1,6 +1,10 @@
 <?php
 
 return [
+	'models' => [
+		'team' => \Newms87\Danx\Models\Team\Team::class,
+	],
+
 	'encryption' => [
 		'key' => env('LARAVEL_ENV_ENCRYPTION_KEY'),
 	],
