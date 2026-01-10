@@ -7,7 +7,7 @@ use Newms87\Danx\Services\TranscodeFileService;
 
 class StoredFileResource extends ActionResource
 {
-    public static function data(StoredFile $storedFile): array
+    public static function data(StoredFile $storedFile, array $includeFields = []): array
     {
         return [
             'id'             => $storedFile->id,

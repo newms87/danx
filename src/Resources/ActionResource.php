@@ -1,6 +1,5 @@
 <?php
 
-
 namespace Newms87\Danx\Resources;
 
 use Exception;
@@ -8,96 +7,97 @@ use Illuminate\Database\Eloquent\Model;
 
 abstract class ActionResource
 {
-	public static bool   $withTypedData = true;
-	public static string $type          = '';
+    public static bool $withTypedData = true;
 
-	public static function typedData(Model $model, array $responseData = []): array
-	{
-		if (!static::$withTypedData) {
-			return $responseData;
-		}
+    public static string $type          = '';
 
-		$type = static::$type ?: basename(preg_replace("#\\\\#", "/", static::class));
+    public static function typedData(Model $model, array $responseData = []): array
+    {
+        if (!static::$withTypedData) {
+            return $responseData;
+        }
 
-		return [
-				'id'           => $model->getKey(),
-				'__type'       => $type,
-				'__timestamp'  => $model->updated_at?->getPreciseTimestamp(3) ?: microtime(true),
-				'__deleted_at' => $model->deleted_at,
-			] + $responseData;
-	}
+        $type = static::$type ?: basename(preg_replace('#\\\\#', '/', static::class));
 
-	public static function make(Model $model = null, array $includeFields = []): array|null
-	{
-		if (!method_exists(static::class, 'data')) {
-			throw new Exception('Resource ' . static::class . ' must implement public static function data($model, $includeFields = []) { ... }');
-		}
+        return [
+            'id'           => $model->getKey(),
+            '__type'       => $type,
+            '__timestamp'  => $model->updated_at?->getPreciseTimestamp(3) ?: microtime(true),
+            '__deleted_at' => $model->deleted_at,
+        ] + $responseData;
+    }
 
-		if (!$model) {
-			return null;
-		}
+    public static function make(?Model $model = null, array $includeFields = []): ?array
+    {
+        if (!method_exists(static::class, 'data')) {
+            throw new Exception('Resource ' . static::class . ' must implement public static function data($model, $includeFields = []) { ... }');
+        }
 
-		/** @noinspection PhpParamsInspection */
-		$data = static::data($model, $includeFields);
+        if (!$model) {
+            return null;
+        }
 
-		// Validate the includeFields
-		foreach($includeFields as $fieldName => $field) {
-			if ($fieldName !== '*' && !array_key_exists($fieldName, $data)) {
-				throw new Exception('Field "' . $fieldName . '" is not a valid field for ' . static::class);
-			}
-		}
+        /** @noinspection PhpParamsInspection */
+        $data = static::data($model, $includeFields);
 
-		$responseData = [];
+        // Validate the includeFields (skip 'id' and '*' as they are handled automatically)
+        foreach ($includeFields as $fieldName => $field) {
+            if ($fieldName !== '*' && $fieldName !== 'id' && !array_key_exists($fieldName, $data)) {
+                throw new Exception('Field "' . $fieldName . '" is not a valid field for ' . static::class);
+            }
+        }
 
-		foreach($data as $fieldName => $datum) {
-			$isCallable = !is_scalar($datum) && is_callable($datum);
+        $responseData = [];
 
-			// If the * special field is set, the field is automatically included
-			// If the field is explicitly set, either include or exclude based on the value
-			$includedField = $includeFields[$fieldName] ?? $includeFields['*'] ?? !$isCallable;
+        foreach ($data as $fieldName => $datum) {
+            $isCallable = !is_scalar($datum) && is_callable($datum);
 
-			// If the field is not included, skip it
-			if ($includedField === false) {
-				continue;
-			}
+            // If the * special field is set, the field is automatically included
+            // If the field is explicitly set, either include or exclude based on the value
+            $includedField = $includeFields[$fieldName] ?? $includeFields['*'] ?? !$isCallable;
 
-			// If the field is a callback, call it ONLY if it is explicitly included (do this recursively so child fields as well)
-			if ($isCallable) {
-				$responseData[$fieldName] = $datum(is_array($includedField) ? $includedField : []);
-			} else {
-				$responseData[$fieldName] = $datum;
-			}
-		}
+            // If the field is not included, skip it
+            if ($includedField === false) {
+                continue;
+            }
 
-		return static::typedData($model, $responseData);
-	}
+            // If the field is a callback, call it ONLY if it is explicitly included (do this recursively so child fields as well)
+            if ($isCallable) {
+                $responseData[$fieldName] = $datum(is_array($includedField) ? $includedField : []);
+            } else {
+                $responseData[$fieldName] = $datum;
+            }
+        }
 
-	public static function collection($collection, array $includeFields = [])
-	{
-		if (!$collection) {
-			return [];
-		}
+        return static::typedData($model, $responseData);
+    }
 
-		$items = [];
+    public static function collection($collection, array $includeFields = [])
+    {
+        if (!$collection) {
+            return [];
+        }
 
-		foreach($collection as $item) {
-			$items[] = static::make($item, $includeFields);
-		}
+        $items = [];
 
-		return $items;
-	}
+        foreach ($collection as $item) {
+            $items[] = static::make($item, $includeFields);
+        }
 
-	/**
-	 * Return the data for a model including all top-level fields
-	 *
-	 * NOTE: You should override this method if you need more deeply nested fields by default for the details view.
-	 *
-	 * Examples for deeply nesting:
-	 *  a) ['*' => ['*' => ["*" => true]]]
-	 *  b) ['*' => ['prop' => ['name' => true]]]
-	 */
-	public static function details(Model $model, ?array $includeFields = null): array
-	{
-		return static::make($model, $includeFields ?? ['*' => true]);
-	}
+        return $items;
+    }
+
+    /**
+     * Return the data for a model including all top-level fields
+     *
+     * NOTE: You should override this method if you need more deeply nested fields by default for the details view.
+     *
+     * Examples for deeply nesting:
+     *  a) ['*' => ['*' => ["*" => true]]]
+     *  b) ['*' => ['prop' => ['name' => true]]]
+     */
+    public static function details(Model $model, ?array $includeFields = null): array
+    {
+        return static::make($model, $includeFields ?? ['*' => true]);
+    }
 }

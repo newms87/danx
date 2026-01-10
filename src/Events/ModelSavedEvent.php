@@ -89,14 +89,18 @@ abstract class ModelSavedEvent implements ShouldBroadcast
      */
     public function broadcastOn()
     {
+        $resourceType = $this->getResourceType();
+        $teamId       = $this->getTeamId();
+        $modelClass   = get_class($this->model);
+
         $userIds = $this->getSubscribedUsers(
-            $this->getResourceType(),
-            $this->getTeamId(),
+            $resourceType,
+            $teamId,
             $this->model,
-            get_class($this->model)
+            $modelClass
         );
 
-        return $this->getSubscribedChannels($this->getResourceType(), $this->getTeamId(), $userIds);
+        return $this->getSubscribedChannels($resourceType, $teamId, $userIds);
     }
 
     /**
