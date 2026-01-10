@@ -193,6 +193,37 @@ class StoredFile extends Model implements AuditableContract
         return $this;
     }
 
+    public function checkTranscodeTimeouts(): static
+    {
+        if (!$this->is_transcoding) {
+            return $this;
+        }
+
+        $hasChanges = false;
+
+        foreach ($this->meta['transcodes'] ?? [] as $transcodeName => $transcodeItem) {
+            $status    = $transcodeItem['status']     ?? null;
+            $timeoutAt = $transcodeItem['timeout_at'] ?? null;
+
+            if ($status === TranscodeFileService::STATUS_COMPLETE || !$timeoutAt) {
+                continue;
+            }
+
+            if (carbon($timeoutAt)->isPast()) {
+                $this->setMeta('transcodes', [
+                    $transcodeName => ['status' => TranscodeFileService::STATUS_TIMEOUT],
+                ]);
+                $hasChanges = true;
+            }
+        }
+
+        if ($hasChanges) {
+            $this->save();
+        }
+
+        return $this;
+    }
+
     public function originalFile(): StoredFile|BelongsTo
     {
         return $this->belongsTo(StoredFile::class, 'original_stored_file_id');
@@ -309,110 +340,110 @@ class StoredFile extends Model implements AuditableContract
         return $this->mime === static::MIME_PDF;
     }
 
-	public function isText(): bool
-	{
-		return $this->mime === static::MIME_TEXT;
-	}
+    public function isText(): bool
+    {
+        return $this->mime === static::MIME_TEXT;
+    }
 
-	public function isTranscode(): bool
-	{
-		return $this->original_stored_file_id !== null;
-	}
+    public function isTranscode(): bool
+    {
+        return $this->original_stored_file_id !== null;
+    }
 
-	/**
-	 * @return string|string[]
-	 */
-	public function extension()
-	{
-		return pathinfo($this->filepath, PATHINFO_EXTENSION);
-	}
+    /**
+     * @return string|string[]
+     */
+    public function extension()
+    {
+        return pathinfo($this->filepath, PATHINFO_EXTENSION);
+    }
 
-	public function setMeta(string $key, $value)
-	{
-		$meta = $this->meta ?: [];
+    public function setMeta(string $key, $value)
+    {
+        $meta = $this->meta ?: [];
 
-		$meta[$key] = is_array($value) ? ArrayHelper::recursiveUpdate($meta[$key] ?? [], $value) : $value;
+        $meta[$key] = is_array($value) ? ArrayHelper::recursiveUpdate($meta[$key] ?? [], $value) : $value;
 
-		$this->setAttribute('meta', $meta);
+        $this->setAttribute('meta', $meta);
 
-		return $this;
-	}
+        return $this;
+    }
 
-	/**
-	 * @return string A human-readable version of the number of bytes in this file
-	 */
-	public function getHumanSizeAttribute()
-	{
-		return FileHelper::getHumanSize($this->size);
-	}
+    /**
+     * @return string A human-readable version of the number of bytes in this file
+     */
+    public function getHumanSizeAttribute()
+    {
+        return FileHelper::getHumanSize($this->size);
+    }
 
-	/**
-	 * @return bool|void|null
-	 */
-	public function forceDelete()
-	{
-		// Delete the actual stored file
-		$this->storageDisk()->delete($this->filepath);
+    /**
+     * @return bool|void|null
+     */
+    public function forceDelete()
+    {
+        // Delete the actual stored file
+        $this->storageDisk()->delete($this->filepath);
 
-		return parent::forceDelete();
-	}
+        return parent::forceDelete();
+    }
 
-	/**
-	 * @return array
-	 */
-	public function resolveLocation()
-	{
-		$latitude  = null;
-		$longitude = null;
+    /**
+     * @return array
+     */
+    public function resolveLocation()
+    {
+        $latitude  = null;
+        $longitude = null;
 
-		if ($this->exif) {
-			[$latitude, $longitude] = FileHelper::getExifLocation($this->exif);
-		}
+        if ($this->exif) {
+            [$latitude, $longitude] = FileHelper::getExifLocation($this->exif);
+        }
 
-		if ($latitude === null || $longitude === null) {
+        if ($latitude === null || $longitude === null) {
             $latitude  = $this->meta['latitude']  ?? null;
-			$longitude = $this->meta['longitude'] ?? null;
-		}
+            $longitude = $this->meta['longitude'] ?? null;
+        }
 
-		if ($latitude !== null && $longitude !== null) {
-			return [
-				'latitude'  => $latitude,
-				'longitude' => $longitude,
-			];
-		}
+        if ($latitude !== null && $longitude !== null) {
+            return [
+                'latitude'  => $latitude,
+                'longitude' => $longitude,
+            ];
+        }
 
-		return [];
-	}
+        return [];
+    }
 
-	/**
-	 * Get text content from all text transcodes as an associative array.
-	 *
-	 * @return array<string, string> Array where key is transcode_name and value is content
-	 */
-	public function getTextTranscodesContent(): array
-	{
-		$textTranscodes = $this->transcodes()->where('mime', self::MIME_TEXT)->get();
+    /**
+     * Get text content from all text transcodes as an associative array.
+     *
+     * @return array<string, string> Array where key is transcode_name and value is content
+     */
+    public function getTextTranscodesContent(): array
+    {
+        $textTranscodes = $this->transcodes()->where('mime', self::MIME_TEXT)->get();
 
-		if ($textTranscodes->isEmpty()) {
-			return [];
-		}
+        if ($textTranscodes->isEmpty()) {
+            return [];
+        }
 
-		$output = [];
-		foreach ($textTranscodes as $transcode) {
-			$content = $transcode->getContents();
-			if ($content) {
-				$output[$transcode->transcode_name] = $content;
-			}
-		}
+        $output = [];
+        foreach ($textTranscodes as $transcode) {
+            $content = $transcode->getContents();
+            if ($content) {
+                $output[$transcode->transcode_name] = $content;
+            }
+        }
 
-		return $output;
-	}
+        return $output;
+    }
 
-	/**
-	 * @return string
-	 */
-	public function __toString()
-	{
-		return "<StoredFile ($this->id) $this->filename mime='$this->mime' size='$this->human_size' page='$this->page_number'>";
-	}
+    /**
+     * @return string
+     */
+    public function __toString()
+    {
+        return "<StoredFile ($this->id) $this->filename mime='$this->mime' size='$this->human_size' page='$this->page_number'>";
+    }
 }
