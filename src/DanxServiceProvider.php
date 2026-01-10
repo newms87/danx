@@ -15,6 +15,7 @@ use Newms87\Danx\Console\Commands\VaporEncryptCommand;
 use Newms87\Danx\Http\Controllers\ApiLogController;
 use Newms87\Danx\Http\Controllers\AuditRequestController;
 use Newms87\Danx\Http\Controllers\JobDispatchController;
+use Newms87\Danx\Http\Controllers\StoredFileController;
 use Newms87\Danx\Http\Routes\ActionRoute;
 use Newms87\Danx\Listeners\LogCommandExecution;
 
@@ -65,5 +66,6 @@ class DanxServiceProvider extends ServiceProvider
         ActionRoute::routes('audit-requests', new AuditRequestController);
         ActionRoute::routes('api-logs', new ApiLogController);
         ActionRoute::routes('job-dispatches', new JobDispatchController);
+        ActionRoute::routes('stored-files', new StoredFileController);
     }
 }

@@ -27,8 +27,6 @@ class FileUploadRoute extends Route
 				->name('file.upload-presigned-url-contents');
 			self::post('presigned-upload-url-completed/{storedFile}', [FileController::class, 'presignedUploadUrlCompleted'])
 				->name('file.presigned-upload-url-completed');
-			self::get('refresh/{storedFile}', [FileController::class, 'refresh'])
-				->name('file.refresh');
 		});
 	}
 }
