@@ -18,6 +18,8 @@ use Newms87\Danx\Http\Controllers\JobDispatchController;
 use Newms87\Danx\Http\Controllers\StoredFileController;
 use Newms87\Danx\Http\Routes\ActionRoute;
 use Newms87\Danx\Listeners\LogCommandExecution;
+use Newms87\Danx\Models\Audit\AuditRequest;
+use Newms87\Danx\Traits\HasRelationCountersTrait;
 
 require_once __DIR__ . '/../bootstrap/helpers.php';
 
@@ -53,9 +55,30 @@ class DanxServiceProvider extends ServiceProvider
                 VaporEncryptCommand::class,
             ]);
         }
+
+        $this->registerDanxRelationCounters();
     }
 
-    public function register() {}
+    /**
+     * Register relation counters for danx models that use HasRelationCountersTrait.
+     * This ensures counter fields are updated when related records are created/deleted.
+     */
+    private function registerDanxRelationCounters(): void
+    {
+        $danxModelsWithCounters = [
+            AuditRequest::class,
+        ];
+
+        foreach ($danxModelsWithCounters as $model) {
+            if (in_array(HasRelationCountersTrait::class, class_uses_recursive($model))) {
+                $model::registerRelationshipCounters();
+            }
+        }
+    }
+
+    public function register()
+    {
+    }
 
     /**
      * Register audit-related routes (AuditRequest, ApiLog, JobDispatch)
