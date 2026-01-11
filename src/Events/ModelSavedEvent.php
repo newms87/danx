@@ -76,7 +76,8 @@ abstract class ModelSavedEvent implements ShouldBroadcast
      */
     public static function dispatch(Model $model, ?string $event = null): void
     {
-        $lock = Cache::lock(static::lockKey($model), 5);
+        $lockKey = static::lockKey($model);
+        $lock = Cache::lock($lockKey, 5);
 
         if ($lock->get()) {
             event(new static($model, $event ?? static::getEvent($model)));
@@ -91,13 +92,12 @@ abstract class ModelSavedEvent implements ShouldBroadcast
     {
         $resourceType = $this->getResourceType();
         $teamId       = $this->getTeamId();
-        $modelClass   = get_class($this->model);
 
         $userIds = $this->getSubscribedUsers(
             $resourceType,
             $teamId,
             $this->model,
-            $modelClass
+            get_class($this->model)
         );
 
         return $this->getSubscribedChannels($resourceType, $teamId, $userIds);

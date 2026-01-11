@@ -25,6 +25,10 @@ class JobDispatchResource extends ActionResource
             'count'                     => $jobDispatch->count,
             'created_at'                => $jobDispatch->created_at,
 
+            'api_log_count'   => $jobDispatch->runningAuditRequest?->api_log_count   ?? 0,
+            'error_log_count' => $jobDispatch->runningAuditRequest?->error_log_count ?? 0,
+            'log_line_count'  => $jobDispatch->runningAuditRequest?->log_line_count  ?? 0,
+
             'logs'    => fn() => $jobDispatch->runningAuditRequest?->logs ?? '',
             'errors'  => fn($fields) => ErrorLogEntryResource::collection($jobDispatch->runningAuditRequest?->errorLogEntries, $fields),
             'apiLogs' => fn($fields) => ApiLogResource::collection($jobDispatch->runningAuditRequest?->apiLogs, $fields),

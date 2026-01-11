@@ -12,7 +12,8 @@ class JobDispatchUpdatedEvent extends ModelSavedEvent
         parent::__construct(
             $jobDispatch,
             $event,
-            JobDispatchResource::class
+            JobDispatchResource::class,
+            $jobDispatch->team_id
         );
     }
 
@@ -40,6 +41,9 @@ class JobDispatchUpdatedEvent extends ModelSavedEvent
             'completed_at'              => true,
             'run_time_ms'               => true,
             'count'                     => true,
+            'api_log_count'             => true,
+            'error_log_count'           => true,
+            'log_line_count'            => true,
         ]);
     }
 }

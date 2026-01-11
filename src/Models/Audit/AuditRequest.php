@@ -4,13 +4,37 @@ namespace Newms87\Danx\Models\Audit;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Newms87\Danx\Events\JobDispatchUpdatedEvent;
 use Newms87\Danx\Models\Job\JobDispatch;
+use Newms87\Danx\Traits\HasRelationCountersTrait;
 use Newms87\Danx\Traits\HasVirtualFields;
 use Newms87\Danx\Traits\SerializesDates;
 
 class AuditRequest extends Model
 {
-	use SerializesDates, HasVirtualFields;
+	use HasRelationCountersTrait, HasVirtualFields, SerializesDates;
+
+	public array $relationCounters = [
+		ApiLog::class        => ['apiLogs' => 'api_log_count'],
+		ErrorLogEntry::class => ['errorLogEntries' => 'error_log_count'],
+	];
+
+	public static function booted(): void
+	{
+		static::saving(function (AuditRequest $auditRequest) {
+			if ($auditRequest->isDirty('logs')) {
+				$auditRequest->log_line_count = $auditRequest->logs ? substr_count($auditRequest->logs, "\n") + 1 : 0;
+			}
+		});
+
+		static::saved(function (AuditRequest $auditRequest) {
+			if ($auditRequest->wasChanged(['api_log_count', 'error_log_count', 'log_line_count'])) {
+				foreach($auditRequest->ranJobs as $jobDispatch) {
+					JobDispatchUpdatedEvent::dispatch($jobDispatch, 'updated');
+				}
+			}
+		});
+	}
 
 	protected $table = 'audit_request';
 
