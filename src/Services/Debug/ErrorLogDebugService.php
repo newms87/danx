@@ -38,7 +38,7 @@ class ErrorLogDebugService
         }
 
         if (!empty($filters['class'])) {
-            $query->whereHas('errorLog', fn($q) => $q->where('error_class', 'LIKE', '%' . $filters['class'] . '%'));
+            $query->whereHas('errorLog', fn($q) => $q->where('error_class', 'ILIKE', '%' . $filters['class'] . '%'));
         }
 
         $entries = $query->orderBy('created_at')->get();
@@ -83,7 +83,7 @@ class ErrorLogDebugService
         }
 
         if (!empty($filters['class'])) {
-            $query->where('error_class', 'LIKE', '%' . $filters['class'] . '%');
+            $query->where('error_class', 'ILIKE', '%' . $filters['class'] . '%');
         }
 
         $errorLogs = $query->limit($limit)->get();

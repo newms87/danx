@@ -261,11 +261,11 @@ class FilterBuilder
 				break;
 
 			case 'like':
-				$query->{$whereFn}($key, 'LIKE', '%' . $value . '%');
+				$query->{$whereFn}($key, 'ILIKE', '%' . $value . '%');
 				break;
 
 			case 'not like':
-				$query->{$whereFn}($key, 'NOT LIKE', '%' . $value . '%');
+				$query->{$whereFn}($key, 'NOT ILIKE', '%' . $value . '%');
 				break;
 
 			case '!=':

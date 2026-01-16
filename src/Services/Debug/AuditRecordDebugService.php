@@ -34,7 +34,7 @@ class AuditRecordDebugService
 
         // Apply filters
         if (!empty($filters['type'])) {
-            $query->where('auditable_type', 'LIKE', '%' . $filters['type'] . '%');
+            $query->where('auditable_type', 'ILIKE', '%' . $filters['type'] . '%');
         }
 
         if (!empty($filters['event'])) {

@@ -228,7 +228,7 @@ class AuditDebugService
     private function applyFilters($query, array $filters): void
     {
         if (!empty($filters['url'])) {
-            $query->where('url', 'LIKE', "%{$filters['url']}%");
+            $query->where('url', 'ILIKE', "%{$filters['url']}%");
         }
 
         if (!empty($filters['user'])) {
@@ -240,7 +240,7 @@ class AuditDebugService
         }
 
         if (!empty($filters['session'])) {
-            $query->where('session_id', 'LIKE', "%{$filters['session']}%");
+            $query->where('session_id', 'ILIKE', "%{$filters['session']}%");
         }
     }
 

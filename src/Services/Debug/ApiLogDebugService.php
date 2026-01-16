@@ -36,11 +36,11 @@ class ApiLogDebugService
 
         // Apply filters
         if (!empty($filters['service'])) {
-            $query->where('service_name', 'LIKE', '%' . $filters['service'] . '%');
+            $query->where('service_name', 'ILIKE', '%' . $filters['service'] . '%');
         }
 
         if (!empty($filters['class'])) {
-            $query->where('api_class', 'LIKE', '%' . $filters['class'] . '%');
+            $query->where('api_class', 'ILIKE', '%' . $filters['class'] . '%');
         }
 
         if (!empty($filters['status'])) {
@@ -90,11 +90,11 @@ class ApiLogDebugService
 
         // Apply filters
         if (!empty($filters['service'])) {
-            $query->where('service_name', 'LIKE', '%' . $filters['service'] . '%');
+            $query->where('service_name', 'ILIKE', '%' . $filters['service'] . '%');
         }
 
         if (!empty($filters['class'])) {
-            $query->where('api_class', 'LIKE', '%' . $filters['class'] . '%');
+            $query->where('api_class', 'ILIKE', '%' . $filters['class'] . '%');
         }
 
         if (!empty($filters['status'])) {

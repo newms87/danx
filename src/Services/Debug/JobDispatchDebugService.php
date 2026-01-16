@@ -81,7 +81,7 @@ class JobDispatchDebugService
         }
 
         if (!empty($filters['name'])) {
-            $query->where('name', 'LIKE', '%' . $filters['name'] . '%');
+            $query->where('name', 'ILIKE', '%' . $filters['name'] . '%');
         }
 
         $jobs = $query->limit($limit)->get();
@@ -184,7 +184,7 @@ class JobDispatchDebugService
         }
 
         if (!empty($filters['name'])) {
-            $query->where('name', 'LIKE', '%' . $filters['name'] . '%');
+            $query->where('name', 'ILIKE', '%' . $filters['name'] . '%');
         }
 
         return $query->orderBy('created_at')->get();
