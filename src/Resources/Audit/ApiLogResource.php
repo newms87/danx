@@ -22,6 +22,7 @@ class ApiLogResource extends ActionResource
             'run_time_ms'      => $apiLog->run_time_ms,
             'started_at'       => $apiLog->started_at,
             'finished_at'      => $apiLog->finished_at,
+            'will_timeout_at'  => $apiLog->will_timeout_at,
             'created_at'       => $apiLog->created_at,
         ];
     }

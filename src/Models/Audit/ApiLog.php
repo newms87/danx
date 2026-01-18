@@ -34,6 +34,7 @@ class ApiLog extends Model
         'response_headers' => 'json',
         'stack_trace'      => 'json',
         'started_at'       => 'datetime',
+        'will_timeout_at'  => 'datetime',
     ];
 
     public function getDateFormat(): string
@@ -47,7 +48,8 @@ class ApiLog extends Model
     public static function logRequest(
         $apiClass,
         $serviceName,
-        RequestInterface $request
+        RequestInterface $request,
+        ?int $timeoutSeconds = null
     ): ApiLog {
         $apiLog = ApiLog::create([
             'audit_request_id' => AuditDriver::getAuditRequest()?->id,
@@ -56,11 +58,12 @@ class ApiLog extends Model
             'service_name'     => $serviceName,
             'url'              => substr($request->getUri(), 0, 512),
             'full_url'         => $request->getUri(),
-            'status_code'      => 0,
+            'status_code'      => null,
             'method'           => $request->getMethod(),
             'request'          => static::parseBody($request),
             'request_headers'  => $request->getHeaders(),
             'started_at'       => now(),
+            'will_timeout_at'  => $timeoutSeconds ? now()->addSeconds($timeoutSeconds) : null,
         ]);
 
         $request->getBody()->rewind();
