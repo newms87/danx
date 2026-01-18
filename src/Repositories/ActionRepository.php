@@ -26,11 +26,18 @@ abstract class ActionRepository
 	}
 
 	/**
-	 * Returns an instantiated model matching the ID
+	 * Returns an instantiated model matching the ID.
+	 * Supports withTrashed query parameter to include soft-deleted records.
 	 */
 	public function instance($id): ?Model
 	{
-		return $this->model()->find($id);
+		$query = $this->model()->query();
+
+		if (request()->boolean('withTrashed') && method_exists($this->model(), 'trashed')) {
+			$query->withTrashed();
+		}
+
+		return $query->find($id);
 	}
 
 	/**
