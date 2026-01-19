@@ -11,6 +11,11 @@ class JobDispatchResource extends ActionResource
 {
     public static function data(JobDispatch $jobDispatch, array $includeFields = []): array
     {
+        // Safety check: if job is running but has timed out, update its status
+        if ($jobDispatch->status === JobDispatch::STATUS_RUNNING && $jobDispatch->isTimedOut()) {
+            $jobDispatch->timeout();
+        }
+
         return [
             'name'                      => $jobDispatch->name,
             'ref'                       => $jobDispatch->ref,

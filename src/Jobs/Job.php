@@ -120,14 +120,12 @@ abstract class Job implements ShouldQueue
 
     /**
      * Get the timeout datetime based on when the job will be evicted / retried by laravel's job runner
-     *
-     * @return Carbon
      */
-    public function getTimeoutAt()
+    public function getTimeoutAt(): Carbon
     {
         $connection = collect(config('queue.connections'))->where('queue', $this->queue ?: 'default')->first();
 
-        return now()->addSeconds($connection['retry_after'] ?? 90);
+        return now()->addSeconds($this->timeout ?? $connection['retry_after'] ?? 90);
     }
 
     /**
@@ -400,6 +398,23 @@ abstract class Job implements ShouldQueue
 
             // Reset the running job reference so subsequent code doesn't think we're still in a job
             self::$runningJob = null;
+        }
+    }
+
+    /**
+     * Handle a job failure (called by Laravel when job fails/times out externally)
+     */
+    public function failed(?Throwable $exception = null): void
+    {
+        if ($this->jobDispatch) {
+            if ($this->jobDispatch->isTimedOut()) {
+                $this->jobDispatch->timeout();
+            } else {
+                $this->jobDispatch->update([
+                    'status'       => JobDispatch::STATUS_FAILED,
+                    'completed_at' => now(),
+                ]);
+            }
         }
     }
 
