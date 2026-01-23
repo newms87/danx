@@ -138,7 +138,7 @@ class JobDispatchDebugService
         $command->line("  Created: {$this->formatTimestamp($jobDispatch->created_at)}");
         $command->line('  Ran at: ' . ($jobDispatch->ran_at ? $this->formatTimestamp($jobDispatch->ran_at) : 'Not started'));
         $command->line('  Completed at: ' . $this->formatCompletedAt($jobDispatch));
-        $command->line('  Timeout at: ' . ($jobDispatch->timeout_at ? $this->formatTimestamp($jobDispatch->timeout_at) : '-'));
+        $command->line('  Will Timeout at: ' . ($jobDispatch->will_timeout_at ? $this->formatTimestamp($jobDispatch->will_timeout_at) : '-'));
         $command->line('  Duration: ' . ($jobDispatch->run_time_ms ? $this->formatDuration($jobDispatch->run_time_ms) : '-'));
 
         $command->newLine();

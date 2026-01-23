@@ -97,10 +97,10 @@ abstract class Job implements ShouldQueue
 
             if (!$jobDispatch->exists) {
                 $jobDispatch->forceFill([
-                    'user_id'    => user()?->id ?: null,
-                    'name'       => $name,
-                    'count'      => 1,
-                    'timeout_at' => $this->getTimeoutAt(),
+                    'user_id'         => user()?->id ?: null,
+                    'name'            => $name,
+                    'count'           => 1,
+                    'will_timeout_at' => $this->getTimeoutAt(),
                 ])->save();
             }
 
@@ -162,7 +162,7 @@ abstract class Job implements ShouldQueue
             if ($now || config('queue.default') === 'sync') {
                 $dispatcher->dispatchSync($this);
             } else {
-                $this->jobDispatch->update(['timeout_at' => $this->getTimeoutAt()]);
+                $this->jobDispatch->update(['will_timeout_at' => $this->getTimeoutAt()]);
                 app(Dispatcher::class)->dispatch($this->job ?: $this);
             }
         } else {

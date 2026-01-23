@@ -27,7 +27,7 @@ class JobDispatch extends Model
         'count',
         'ran_at',
         'completed_at',
-        'timeout_at',
+        'will_timeout_at',
         'data',
         'running_audit_request_id',
         'dispatch_audit_request_id',
@@ -38,7 +38,7 @@ class JobDispatch extends Model
     protected $casts = [
         'ran_at'       => 'datetime',
         'completed_at' => 'datetime',
-        'timeout_at'   => 'datetime',
+        'will_timeout_at' => 'datetime',
         'data'         => 'json',
     ];
 
@@ -66,8 +66,8 @@ class JobDispatch extends Model
      */
     public function isTimedOut(): bool
     {
-        if ($this->timeout_at) {
-            return $this->timeout_at->isPast();
+        if ($this->will_timeout_at) {
+            return $this->will_timeout_at->isPast();
         }
 
         return $this->created_at?->addSeconds(90)->isPast() ?? false;

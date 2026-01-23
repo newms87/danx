@@ -25,7 +25,7 @@ class JobDispatchUpdatedEvent extends ModelSavedEvent
             'ref'          => true,
             'job_batch_id' => true,
             'status'       => true,
-            'timeout_at'   => true,
+            'will_timeout_at' => true,
             'created_at'   => true,
         ]);
     }
