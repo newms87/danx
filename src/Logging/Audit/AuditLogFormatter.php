@@ -2,7 +2,6 @@
 
 namespace Newms87\Danx\Logging\Audit;
 
-use Exception;
 use Monolog\Formatter\NormalizerFormatter;
 use Monolog\LogRecord;
 
@@ -37,17 +36,19 @@ class AuditLogFormatter extends NormalizerFormatter
 			$record = $record->toArray();
 		}
 
-		/** @var Exception $exception */
 		$exception = $record['exception'] ?? $record['context']['exception'] ?? null;
-		if ($exception) {
+		if ($exception instanceof \Throwable) {
 			$message = $exception::class . ': ' . $exception->getMessage() . ' --- ' . $exception->getFile() . '@' . $exception->getLine();
+		} elseif ($exception) {
+			$message = (string)$exception;
 		} else {
 			$message = (string)$record['message'];
 		}
 
 		return [
 			'message'   => $message,
-			'exception' => $exception,
+			// Only return exception if it's a Throwable - strings can't be passed to ErrorLog::logException()
+			'exception' => $exception instanceof \Throwable ? $exception : null,
 		];
 	}
 }
