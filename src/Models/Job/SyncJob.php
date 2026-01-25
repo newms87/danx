@@ -6,14 +6,16 @@ use Carbon\Carbon;
 use Exception;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\MorphToMany;
-use Illuminate\Support\Facades\Log;
 use Laravel\SerializableClosure\SerializableClosure;
+use Newms87\Danx\Traits\HasDebugLogging;
 use Newms87\Danx\Helpers\LockHelper;
 use Newms87\Danx\Jobs\Job;
 use Throwable;
 
 class SyncJob extends Model
 {
+	use HasDebugLogging;
+
 	protected $table = 'sync_jobs';
 
 	protected $guarded = ['id'];
@@ -196,10 +198,10 @@ class SyncJob extends Model
 
 			$instance = $this->getModelInstance();
 
-			Log::debug("Sync Job running: $this->name for $this->model ($this->id)" . ($instance ? "" : " MODEL NOT FOUND"));
+			static::logDebug("Sync Job running: $this->name for $this->model ($this->id)" . ($instance ? "" : " MODEL NOT FOUND"));
 
 			if (!$instance) {
-				Log::warning("Sync Job skipped: Model not found. Maybe it was deleted?");
+				static::logWarning("Sync Job skipped: Model not found. Maybe it was deleted?");
 				$this->dirty_at = null;
 				$this->retry_at = null;
 				$this->save();
@@ -212,11 +214,11 @@ class SyncJob extends Model
 				return;
 			}
 
-			Log::debug("Sync Job successful: $this->name for $this->model ($this->id)");
+			static::logDebug("Sync Job successful: $this->name for $this->model ($this->id)");
 
 			$this->syncSuccessful();
 		} catch(Throwable $e) {
-			Log::warning("SyncJob failed: " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
+			static::logWarning("SyncJob failed: " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
 			throw $e;
 		} finally {
 			LockHelper::release($this);

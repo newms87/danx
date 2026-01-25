@@ -5,8 +5,8 @@ namespace Newms87\Danx\Models\Audit;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Support\Facades\Log;
 use Newms87\Danx\Audit\AuditDriver;
+use Newms87\Danx\Traits\HasDebugLogging;
 use Newms87\Danx\Helpers\StringHelper;
 use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
@@ -19,6 +19,8 @@ use Throwable;
  */
 class ApiLog extends Model
 {
+    use HasDebugLogging;
+
     protected $table = 'api_logs';
 
     protected $guarded = [
@@ -78,13 +80,22 @@ class ApiLog extends Model
         ApiLog $apiLog,
         ResponseInterface $response
     ): ApiLog {
+        $runTimeMs = ($apiLog->started_at ?? now())->diffInMilliseconds(now());
+
+        static::logDebug('logResponse', [
+            'api_log_id'  => $apiLog->id,
+            'status_code' => $response->getStatusCode(),
+            'run_time_ms' => $runTimeMs,
+            'body_length' => $response->getBody()->getSize(),
+        ]);
+
         $apiLog->update([
             'status_code'      => $response->getStatusCode(),
             'response'         => static::parseBody($response),
             'response_headers' => $response->getHeaders(),
             'stack_trace'      => $response->getStatusCode() >= 400 ? debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS) : null,
             'finished_at'      => now(),
-            'run_time_ms'      => ($apiLog->started_at ?? now())->diffInMilliseconds(now()),
+            'run_time_ms'      => $runTimeMs,
         ]);
 
         $response->getBody()->rewind();
@@ -98,7 +109,16 @@ class ApiLog extends Model
      */
     public static function logResponseError(ApiLog $apiLog, Throwable $exception, $errorType = 'request_error'): void
     {
-        Log::error('Request Failed: ' . StringHelper::logSafeString($exception->getMessage()));
+        static::logError('Request Failed: ' . StringHelper::logSafeString($exception->getMessage()));
+
+        $runTimeMs = ($apiLog->started_at ?? now())->diffInMilliseconds(now());
+        static::logDebug('logResponseError', [
+            'api_log_id'      => $apiLog->id,
+            'error_type'      => $errorType,
+            'run_time_ms'     => $runTimeMs,
+            'exception_class' => get_class($exception),
+            'exception_msg'   => substr($exception->getMessage(), 0, 500),
+        ]);
 
         $apiLog->update([
             'status_code' => method_exists($exception, 'getResponse') ? ($exception->getResponse()?->getStatusCode() ?? 0) : 0,

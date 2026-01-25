@@ -6,8 +6,8 @@ use Exception;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Response;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use Newms87\Danx\Traits\HasDebugLogging;
 use Newms87\Danx\Jobs\Job;
 use Newms87\Danx\Models\Audit\Audit;
 use Newms87\Danx\Models\Audit\AuditRequest;
@@ -18,6 +18,8 @@ use OwenIt\Auditing\Exceptions\AuditingException;
 
 class AuditDriver implements AuditDriverContract
 {
+	use HasDebugLogging;
+
 	// The singleton session / request objects for this request
 	const array SENSITIVE_FIELDS = [
 		'/password/i',
@@ -216,7 +218,7 @@ class AuditDriver implements AuditDriverContract
 			]);
 		} catch(Exception $e) {
 			if (config('danx.audit.debug')) {
-				Log::debug("Failed to create audit entry: " . $e->getMessage());
+				static::logDebug("Failed to create audit entry: " . $e->getMessage());
 			}
 
 			return null;
@@ -251,7 +253,7 @@ class AuditDriver implements AuditDriverContract
 				]);
 			} catch(Exception $e) {
 				if (config('danx.audit.debug')) {
-					Log::debug("Failed to create audit request. Auditing has been disabled.\n\n" . $e->getMessage());
+					static::logDebug("Failed to create audit request. Auditing has been disabled.\n\n" . $e->getMessage());
 				}
 				config()->set('danx.audit.enabled', false);
 

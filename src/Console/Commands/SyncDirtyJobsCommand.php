@@ -4,13 +4,15 @@ namespace Newms87\Danx\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Support\Facades\Log;
 use Newms87\Danx\Jobs\SyncDirtyJobJob;
+use Newms87\Danx\Traits\HasDebugLogging;
 use Newms87\Danx\Models\Job\SyncJob;
 use Throwable;
 
 class SyncDirtyJobsCommand extends Command
 {
+	use HasDebugLogging;
+
 	protected $signature   = 'sync:dirty-jobs';
 	protected $description = 'Sync any dirty SyncJob records';
 
@@ -37,7 +39,7 @@ class SyncDirtyJobsCommand extends Command
 
 				$syncJob->job_dispatch_id = $job->getJobDispatch()->id;
 			} catch(Throwable $e) {
-				Log::error("Failed to dispatch job for SyncJob {$syncJob->id}: {$e->getMessage()}");
+				static::logError("Failed to dispatch job for SyncJob {$syncJob->id}: {$e->getMessage()}");
 			}
 			$syncJob->attempts += 1;
 			$syncJob->save();
@@ -46,7 +48,7 @@ class SyncDirtyJobsCommand extends Command
 		if (now()->startOfMinute()->isMidnight()) {
 			$failedSyncJobs = SyncJob::where('attempts', '>=', 3)->pluck('name', 'id');
 			$syncJobList    = $failedSyncJobs->map(fn($name, $id) => "$id: $name")->implode("\n");
-			Log::error("There are " . $failedSyncJobs->count() . " failed SyncJobs:\n\n$syncJobList");
+			static::logError("There are " . $failedSyncJobs->count() . " failed SyncJobs:\n\n$syncJobList");
 		}
 	}
 }

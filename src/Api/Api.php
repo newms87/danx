@@ -9,8 +9,8 @@ use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Exception\RequestException;
 use GuzzleHttp\HandlerStack;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
+use Newms87\Danx\Traits\HasDebugLogging;
 use Newms87\Danx\Exceptions\ApiException;
 use Newms87\Danx\Exceptions\ApiRequestException;
 use Newms87\Danx\Helpers\ConsoleHelper;
@@ -24,6 +24,7 @@ use Psr\Http\Message\ResponseInterface;
  */
 abstract class Api
 {
+    use HasDebugLogging;
     // Limits the request rates to the API. Define as many rate limits as needed to satisfy requirements of endpoint
     // Leave empty for no rate limiting.
     // Set waitPerAttempt as false to throw an exception immediately if rate limit is exceeded
@@ -242,6 +243,12 @@ LUA;
                 $options['timeout'] = $this->requestTimeout;
             }
 
+            // Force cURL to use poll/select-based timeouts instead of SIGALRM.
+            // This prevents conflicts with pcntl_alarm() used by Laravel's queue worker,
+            // which would otherwise override cURL's SIGALRM and prevent timeouts from firing.
+            // Note: Use + operator instead of array_merge() to preserve integer CURLOPT_* keys
+            $options['curl'] = ($options['curl'] ?? []) + [CURLOPT_NOSIGNAL => true];
+
             $this->client = new Client($options);
         }
 
@@ -275,7 +282,7 @@ LUA;
                     $timeout
                 );
             } catch (Exception $exception) {
-                Log::error(
+                static::logError(
                     'Failed committing API log request entry: ' . StringHelper::logSafeString($exception->getMessage()),
                     ['exception' => $exception]
                 );
@@ -297,7 +304,7 @@ LUA;
                 ApiLog::logResponse($this->currentApiLog, $response);
                 $this->fireCallbacks($this->currentApiLog);
             } catch (Exception $exception) {
-                Log::error(
+                static::logError(
                     'Failed committing API log request entry: ' . StringHelper::logSafeString($exception->getMessage()),
                     ['exception' => $exception]
                 );
@@ -342,8 +349,8 @@ LUA;
                     try {
                         $callback($apiLog);
                     } catch (Exception $exception) {
-                        Log::error(
-                            'Error in GET callback for ' . static::class . ': ' . $exception->getMessage(),
+                        static::logError(
+                            'Error in GET callback: ' . $exception->getMessage(),
                             ['exception' => $exception]
                         );
                     }
@@ -355,8 +362,8 @@ LUA;
                     try {
                         $callback($apiLog);
                     } catch (Exception $exception) {
-                        Log::error(
-                            'Error in UPDATE callback for ' . static::class . ': ' . $exception->getMessage(),
+                        static::logError(
+                            'Error in UPDATE callback: ' . $exception->getMessage(),
                             ['exception' => $exception]
                         );
                     }
@@ -526,6 +533,11 @@ LUA;
 
             $queryParams = $this->mergeQueryParamsFromUrl($url, $queryParams);
 
+            $startTime = microtime(true);
+
+            // Log request start so we can see what's in progress if the job gets killed
+            static::logDebug("Request started: {$type} {$this->baseApiUrl}/{$url} timeout={$this->requestTimeout}s");
+
             $this->response = $client->request(
                 $type,
                 $url,
@@ -534,8 +546,15 @@ LUA;
                     'body'  => $body,
                 ]
             );
+
+            // Log successful completion with timing
+            $elapsed = round(microtime(true) - $startTime, 3);
+            static::logDebug("Request completed: {$type} {$this->baseApiUrl}/{$url} elapsed={$elapsed}s status=" . $this->response->getStatusCode());
         } catch (RequestException $exception) {
+            $elapsed   = round(microtime(true) - $startTime, 3);
             $isTimeout = $this->isTimeoutException($exception);
+
+            static::logWarning("Request failed: {$type} {$this->baseApiUrl}/{$url} elapsed={$elapsed}s is_timeout=" . ($isTimeout ? 'true' : 'false') . " timeout={$this->requestTimeout}s");
 
             if ($this->currentApiLog) {
                 ApiLog::logResponseError($this->currentApiLog, $exception, $isTimeout ? 'timeout' : 'request_error');

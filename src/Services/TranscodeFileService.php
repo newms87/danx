@@ -4,8 +4,8 @@ namespace Newms87\Danx\Services;
 
 use Exception;
 use Illuminate\Database\Eloquent\Collection;
-use Illuminate\Support\Facades\Log;
 use Newms87\Danx\Exceptions\ApiException;
+use Newms87\Danx\Traits\HasDebugLogging;
 use Newms87\Danx\Jobs\TranscodeDataUrlToStoredFileJob;
 use Newms87\Danx\Jobs\TranscodeStoredFileJob;
 use Newms87\Danx\Models\Job\JobBatch;
@@ -17,6 +17,8 @@ use Newms87\Danx\Services\TranscodeFile\PdfToImagesTranscoder;
 
 class TranscodeFileService
 {
+	use HasDebugLogging;
+
 	const string
 		STATUS_PENDING = 'Pending',
 		STATUS_IN_PROGRESS = 'In Progress',
@@ -84,12 +86,12 @@ class TranscodeFileService
 	 */
 	public function transcode(string $transcodeName, StoredFile $storedFile, array $options = []): Collection
 	{
-		Log::debug("Transcode $transcodeName: $storedFile");
+		static::logDebug("Transcode $transcodeName: $storedFile");
 
 		$transcodes = $storedFile->transcodes()->where('transcode_name', $transcodeName)->get();
 
 		if ($transcodes->isNotEmpty()) {
-			Log::debug("Already has $transcodeName transcodes");
+			static::logDebug("Already has $transcodeName transcodes");
 
 			return $transcodes;
 		}

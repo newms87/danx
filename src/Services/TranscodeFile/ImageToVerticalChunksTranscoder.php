@@ -2,8 +2,8 @@
 
 namespace Newms87\Danx\Services\TranscodeFile;
 
-use Illuminate\Support\Facades\Log;
 use Intervention\Image\ImageManager;
+use Newms87\Danx\Traits\HasDebugLogging;
 use Newms87\Danx\Exceptions\ApiException;
 use Newms87\Danx\Models\Utilities\StoredFile;
 use Throwable;
@@ -15,6 +15,7 @@ use Throwable;
  */
 class ImageToVerticalChunksTranscoder extends FileTranscoderAbstract implements FileTranscoderContract
 {
+	use HasDebugLogging;
 	/**
 	 * Options
 	 *  - maxHeight: The maximum height for each chunk (the last chunk will match the remaining height)
@@ -32,7 +33,7 @@ class ImageToVerticalChunksTranscoder extends FileTranscoderAbstract implements 
 		$maxHeight = $options['maxHeight'];
 		$padding   = $options['padding'];
 
-		Log::debug("Creating vertical chunks: height = $maxHeight px, padding = $padding px");
+		static::logDebug("Creating vertical chunks: height = $maxHeight px, padding = $padding px");
 
 		try {
 			$contents = file_get_contents($storedFile->url);
@@ -46,13 +47,13 @@ class ImageToVerticalChunksTranscoder extends FileTranscoderAbstract implements 
 				$manager = ImageManager::imagick();
 				$image   = $manager->read($contents);
 			} catch(Throwable $throwable) {
-				Log::warning("Imagick Error reading image $storedFile->url:\n" . $throwable->getMessage());
+				static::logWarning("Imagick Error reading image $storedFile->url:\n" . $throwable->getMessage());
 
 				try {
 					$manager = ImageManager::gd();
 					$image   = $manager->read($contents);
 				} catch(Throwable $throwable) {
-					Log::error("GD Error reading image $storedFile->url:\n" . $throwable->getMessage());
+					static::logError("GD Error reading image $storedFile->url:\n" . $throwable->getMessage());
 					throw $throwable;
 				}
 			}
@@ -77,7 +78,7 @@ class ImageToVerticalChunksTranscoder extends FileTranscoderAbstract implements 
 
 			return $transcodedFiles;
 		} catch(Throwable $throwable) {
-			Log::error("Error vertical chunking $storedFile->url:\n" . $throwable->getMessage());
+			static::logError("Error vertical chunking $storedFile->url:\n" . $throwable->getMessage());
 			throw $throwable;
 		}
 	}

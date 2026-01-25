@@ -12,8 +12,8 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Log;
 use Newms87\Danx\Audit\AuditDriver;
+use Newms87\Danx\Traits\HasDebugLogging;
 use Newms87\Danx\Helpers\DateHelper;
 use Newms87\Danx\Helpers\FileHelper;
 use Newms87\Danx\Helpers\LockHelper;
@@ -23,7 +23,7 @@ use Throwable;
 
 abstract class Job implements ShouldQueue
 {
-    use Batchable, InteractsWithQueue, Queueable, SerializesModels;
+    use Batchable, HasDebugLogging, InteractsWithQueue, Queueable, SerializesModels;
 
     protected ?JobDispatch $jobDispatch = null;
 
@@ -74,7 +74,7 @@ abstract class Job implements ShouldQueue
         try {
             LockHelper::acquire('resolve-' . $ref);
         } catch (Throwable $exception) {
-            Log::debug("Lock acquisition skipped: Job was recently triggered: $ref");
+            static::logDebug("Lock acquisition skipped: Job was recently triggered: $ref");
             $this->jobDispatch = JobDispatch::where('ref', $ref)->orderByDesc('id')->first();
 
             return;
@@ -109,7 +109,7 @@ abstract class Job implements ShouldQueue
             }
 
             if (config('queue.debug')) {
-                Log::debug("Created $jobDispatch");
+                static::logDebug("Created $jobDispatch");
             }
 
             $this->jobDispatch = $jobDispatch;
@@ -140,7 +140,7 @@ abstract class Job implements ShouldQueue
     {
         // Don't do anything if Job dispatching is disabled
         if (!$this->jobDispatch) {
-            Log::debug('Job Dispatch is disabled for ' . static::class);
+            static::logDebug('Job Dispatch is disabled');
 
             return $this;
         }
@@ -150,7 +150,7 @@ abstract class Job implements ShouldQueue
             // If we cannot immediately acquire the lock, that means someone else is already doing what we're trying to do
             // This will be released when the job is just about to execute, we are debouncing all other redundant requests
             if (!LockHelper::get($this->jobDispatch->ref, 30)) {
-                Log::debug("Job {$this->jobDispatch->ref} is already running");
+                static::logDebug("Job {$this->jobDispatch->ref} is already running");
                 $this->jobDispatch->update(['status' => JobDispatch::STATUS_ABORTED]);
 
                 return $this;
@@ -170,7 +170,7 @@ abstract class Job implements ShouldQueue
             $this->jobDispatch->update(['count' => $this->jobDispatch->count + 1]);
 
             if (config('queue.debug')) {
-                Log::debug("Pending Job {$this->jobDispatch->id} still waiting [count: {$this->jobDispatch->count}]");
+                static::logDebug("Pending Job {$this->jobDispatch->id} still waiting [count: {$this->jobDispatch->count}]");
             }
         }
 
@@ -236,7 +236,7 @@ abstract class Job implements ShouldQueue
         $class = get_class($this);
 
         if (config('danx.audit.jobs.debug')) {
-            Log::debug('Unserializing Job ' . static::class . " ({$this->jobDispatch?->id})");
+            static::logDebug("Unserializing Job ({$this->jobDispatch?->id})");
         }
 
         foreach ($properties as $property) {
@@ -263,7 +263,7 @@ abstract class Job implements ShouldQueue
 
             try {
                 if (config('danx.audit.jobs.debug')) {
-                    Log::debug("$name: " . substr(json_encode($values[$name], JSON_PRETTY_PRINT), 0, 500));
+                    static::logDebug("$name: " . substr(json_encode($values[$name], JSON_PRETTY_PRINT), 0, 500));
                 }
                 // Unnecessary overhead to load all the relationships up front - let them be lazy loaded
                 unset($values[$name]->relations);
@@ -348,9 +348,9 @@ abstract class Job implements ShouldQueue
         DateHelper::timerReset(static::class);
 
         $ref     = $this->ref();
-        $prefix  = '###### Job';
-        $jobName = static::class . " ({$this->jobDispatch->id}) --- $ref";
-        Log::debug("$prefix Handling  $jobName");
+        $prefix  = '######';
+        $jobName = "({$this->jobDispatch->id}) --- $ref";
+        static::logDebug("$prefix Handling  $jobName");
 
         $jobBatch = $this->jobDispatch->jobBatch;
 
@@ -372,10 +372,10 @@ abstract class Job implements ShouldQueue
                             if (is_callable($onComplete)) {
                                 $onComplete($jobBatch);
                             } else {
-                                Log::error("on_complete callback for JobBatch is not callable $jobBatch->id");
+                                static::logError("on_complete callback for JobBatch is not callable $jobBatch->id");
                             }
                         } catch (Throwable $exception) {
-                            Log::error("Error executing on_complete callback for JobBatch $jobBatch->id: " . $exception->getMessage());
+                            static::logError("Error executing on_complete callback for JobBatch $jobBatch->id: " . $exception->getMessage());
                         }
                     }
                 }
@@ -383,10 +383,10 @@ abstract class Job implements ShouldQueue
             }
 
             $time = DateHelper::timerStr(static::class);
-            Log::debug("$prefix Completed $jobName --- ($time)");
+            static::logDebug("$prefix Completed $jobName --- ($time)");
         } catch (Throwable $exception) {
             $time = DateHelper::timerStr(static::class);
-            Log::debug("$prefix Failed   $jobName --- ($time)");
+            static::logDebug("$prefix Failed   $jobName --- ($time)");
             if ($jobBatch) {
                 $jobBatch->failed_jobs += 1;
                 $jobBatch->save();
@@ -406,6 +406,14 @@ abstract class Job implements ShouldQueue
      */
     public function failed(?Throwable $exception = null): void
     {
+        $elapsed = DateHelper::timerStr(static::class);
+        static::logDebug('failed()', [
+            'dispatch_id'  => $this->jobDispatch?->id,
+            'is_timed_out' => $this->jobDispatch?->isTimedOut(),
+            'elapsed'      => $elapsed,
+            'exception'    => $exception ? substr($exception->getMessage(), 0, 500) : null,
+        ]);
+
         if ($this->jobDispatch) {
             if ($this->jobDispatch->isTimedOut()) {
                 $this->jobDispatch->timeout();
@@ -431,11 +439,11 @@ abstract class Job implements ShouldQueue
         while ($runningJob = JobDispatch::runningJob($this->jobDispatch->ref)) {
             if (!$runningJob->ran_at || $runningJob->isTimedOut()) {
                 $runningJob->update(['status' => JobDispatch::STATUS_TIMEOUT]);
-                Log::warning("The previously running job $runningJob timed out. It has been flagged as timed out and continuing to run the current job");
+                static::logWarning("The previously running job $runningJob timed out. It has been flagged as timed out and continuing to run the current job");
                 break;
             } else {
                 if (config('queue.debug')) {
-                    Log::debug("$this->jobDispatch waiting for currently running job $runningJob to complete");
+                    static::logDebug("$this->jobDispatch waiting for currently running job $runningJob to complete");
                 }
                 sleep(5);
             }
@@ -453,6 +461,7 @@ abstract class Job implements ShouldQueue
 
         try {
             Job::$runningJob = $this->jobDispatch;
+
             app()->call($callback);
 
             $this->jobDispatch->update([
@@ -461,7 +470,7 @@ abstract class Job implements ShouldQueue
             ]);
         } catch (Throwable $exception) {
             if (config('queue.debug')) {
-                Log::debug("Exception caught for $this->jobDispatch: " . $exception->getMessage());
+                static::logDebug("Exception caught for $this->jobDispatch: " . $exception->getMessage());
             }
 
             // Make sure we set the status to exception if there is a problem

@@ -4,14 +4,16 @@ namespace Newms87\Danx\Middleware;
 
 use Closure;
 use Exception;
-use Newms87\Danx\Audit\AuditDriver;
 use Illuminate\Http\RedirectResponse;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redirect;
 use Illuminate\Support\Facades\Storage;
+use Newms87\Danx\Audit\AuditDriver;
+use Newms87\Danx\Traits\HasDebugLogging;
 
 class ResponseSizeLimitMiddleware
 {
+	use HasDebugLogging;
+
 	public function handle($request, Closure $next)
 	{
 		$response = $next($request);
@@ -54,7 +56,7 @@ class ResponseSizeLimitMiddleware
 		}
 
 		// Make sure we log this s3 workaround issue, so we can more easily debug issues
-		Log::info("AWS Lambda payload limit reached: $arLink");
+		static::logInfo("AWS Lambda payload limit reached: $arLink");
 
 		$disk = Storage::disk(config('danx.response_size_limit.disk'));
 		$path = "lambda-responses/$auditRequest->id.txt";

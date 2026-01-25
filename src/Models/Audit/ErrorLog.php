@@ -7,14 +7,16 @@ use Exception;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Support\Facades\Log;
 use Newms87\Danx\Audit\AuditDriver;
+use Newms87\Danx\Traits\HasDebugLogging;
 use Newms87\Danx\Helpers\StringHelper;
 use Newms87\Danx\Services\Error\RetryableErrorChecker;
 use Throwable;
 
 class ErrorLog extends Model
 {
+	use HasDebugLogging;
+
 	const int
 		DEBUG = 100,
 		INFO = 200,
@@ -194,7 +196,7 @@ class ErrorLog extends Model
 		}
 
 		if ($errorLog) {
-			Log::error(
+			static::logError(
 				$errorLog->level . " " . basename($errorLog) . " ($errorLog->code)\n\n" .
 				"$errorLog->message\n\n" .
 				"$errorLog->file:$errorLog->line" .
@@ -231,7 +233,7 @@ class ErrorLog extends Model
 			$errorLog->save();
 		} catch(Exception $exception) {
 			// This is likely due to the error_logs table missing, so don't attempt to continue
-			Log::error('Error saving to error log table: ' . $exception->getMessage());
+			static::logError('Error saving to error log table: ' . $exception->getMessage());
 
 			return null;
 		}
