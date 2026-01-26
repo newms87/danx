@@ -490,6 +490,7 @@ LUA;
     public function setNextTimeout(int $timeout): static
     {
         $this->nextRequestTimeout = $timeout;
+        static::logDebug("setNextTimeout({$timeout}s) called - will apply to next request");
 
         return $this;
     }

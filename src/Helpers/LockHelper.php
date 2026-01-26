@@ -8,6 +8,14 @@ use Illuminate\Support\Facades\Log;
 use Newms87\Danx\Exceptions\LockException;
 use Throwable;
 
+/**
+ * Helper for acquiring and releasing distributed locks using Laravel's cache driver.
+ *
+ * NOTE: This class intentionally does NOT use HasDebugLogging trait.
+ * LockHelper logging is handled as a special case - AuditLogHandler has a
+ * re-entrancy guard that prevents infinite loops when LockHelper logs during
+ * lock acquisition/release for audit_request records.
+ */
 class LockHelper
 {
 	// Locks are only important to lock out other requests from modifying the same resource

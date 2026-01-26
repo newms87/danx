@@ -18,6 +18,7 @@ use Newms87\Danx\Helpers\DateHelper;
 use Newms87\Danx\Helpers\FileHelper;
 use Newms87\Danx\Helpers\LockHelper;
 use Newms87\Danx\Models\Job\JobDispatch;
+use Newms87\Danx\Support\ApiRequestHeartbeat;
 use ReflectionClass;
 use Throwable;
 
@@ -459,6 +460,9 @@ abstract class Job implements ShouldQueue
             'ran_at' => now(),
         ]);
 
+        // Start heartbeat monitoring for the job execution
+        $heartbeat = ApiRequestHeartbeat::start("Job:{$this->jobDispatch->name}|JobDispatch:{$this->jobDispatch->id}");
+
         try {
             Job::$runningJob = $this->jobDispatch;
 
@@ -480,6 +484,9 @@ abstract class Job implements ShouldQueue
             ]);
 
             throw $exception;
+        } finally {
+            // Stop the heartbeat after job completes (success or failure)
+            $heartbeat->stop();
         }
     }
 }

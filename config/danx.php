@@ -37,6 +37,14 @@ return [
 			'enabled' => env('AUDIT_JOBS_ENABLED', false),
 			'debug'   => env('AUDIT_JOBS_DEBUG', false),
 		],
+
+		/**
+		 * Heartbeat process that monitors long-running API requests and logs if the parent process dies unexpectedly
+		 */
+		'heartbeat' => [
+			'enabled'  => env('JOB_HEARTBEAT_ENABLED', true),
+			'interval' => env('JOB_HEARTBEAT_INTERVAL', 10),
+		],
 	],
 
 	/*
