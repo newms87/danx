@@ -8,25 +8,25 @@ trait HasDebugLogging
 {
     public static function logDebug(string $message, array $data = []): void
     {
-        self::log('debug', $message, $data);
+        self::writeLog('debug', $message, $data);
     }
 
     public static function logWarning(string $message, array $data = []): void
     {
-        self::log('warning', $message, $data);
+        self::writeLog('warning', $message, $data);
     }
 
     public static function logError(string $message, array $data = []): void
     {
-        self::log('error', $message, $data);
+        self::writeLog('error', $message, $data);
     }
 
     public static function logInfo(string $message, array $data = []): void
     {
-        self::log('info', $message, $data);
+        self::writeLog('info', $message, $data);
     }
 
-    private static function log(string $level, string $message, array $data = []): void
+    private static function writeLog(string $level, string $message, array $data = []): void
     {
         $loggerName = preg_replace('/.*\\\\/', '', static::class);
         $formattedMessage = "[$loggerName] $message";
