@@ -9,7 +9,7 @@ use Newms87\Danx\Traits\HasDebugLogging;
 
 /**
  * Forks a child process that logs heartbeats to the audit_request.logs field
- * while the parent waits for an API response.
+ * while a long-running operation executes.
  *
  * If the parent process is killed (even with SIGKILL), the child will detect it
  * and log that the parent died unexpectedly.
@@ -19,14 +19,14 @@ use Newms87\Danx\Traits\HasDebugLogging;
  *   JOB_HEARTBEAT_INTERVAL=10       Seconds between heartbeats (default: 10)
  *
  * Usage:
- *   $heartbeat = ApiRequestHeartbeat::start('MyOperation');
+ *   $heartbeat = Heartbeat::start('MyOperation');
  *   try {
- *       $response = $api->post(...);
+ *       // long-running operation
  *   } finally {
  *       $heartbeat->stop();
  *   }
  */
-class ApiRequestHeartbeat
+class Heartbeat
 {
     use HasDebugLogging;
 
@@ -51,6 +51,7 @@ class ApiRequestHeartbeat
         $instance = new self($operationId);
 
         if (!$instance->isEnabled()) {
+            self::logDebug("Heartbeat DISABLED via config for {$operationId}");
             return $instance;
         }
 
@@ -61,7 +62,7 @@ class ApiRequestHeartbeat
         $auditRequestId = AuditDriver::$auditRequest?->id;
 
         if (!$auditRequestId) {
-            self::logDebug("No audit request available for {$operationId}");
+            self::logDebug("Heartbeat: No audit request available for {$operationId}");
             return $instance;
         }
 

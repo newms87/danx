@@ -9,6 +9,7 @@ use Newms87\Danx\Console\Commands\AuditDebugCommand;
 use Newms87\Danx\Console\Commands\DanxLinkCommand;
 use Newms87\Danx\Console\Commands\FixPermissions;
 use Newms87\Danx\Console\Commands\SyncDirtyJobsCommand;
+use Newms87\Danx\Console\Commands\TestHeartbeatCommand;
 use Newms87\Danx\Console\Commands\TranscodeCleanCommand;
 use Newms87\Danx\Console\Commands\VaporDecryptCommand;
 use Newms87\Danx\Console\Commands\VaporEncryptCommand;
@@ -19,6 +20,7 @@ use Newms87\Danx\Http\Controllers\StoredFileController;
 use Newms87\Danx\Http\Routes\ActionRoute;
 use Newms87\Danx\Listeners\LogCommandExecution;
 use Newms87\Danx\Models\Audit\AuditRequest;
+use Newms87\Danx\Support\SignalHandler;
 use Newms87\Danx\Traits\HasRelationCountersTrait;
 
 require_once __DIR__ . '/../bootstrap/helpers.php';
@@ -28,6 +30,8 @@ class DanxServiceProvider extends ServiceProvider
     public function boot()
     {
         Event::listen(CommandStarting::class, LogCommandExecution::class);
+
+        SignalHandler::register();
 
         $this->mergeConfigFrom(__DIR__ . '/../config/danx.php', 'danx');
 
@@ -50,6 +54,7 @@ class DanxServiceProvider extends ServiceProvider
                 DanxLinkCommand::class,
                 FixPermissions::class,
                 SyncDirtyJobsCommand::class,
+                TestHeartbeatCommand::class,
                 TranscodeCleanCommand::class,
                 VaporDecryptCommand::class,
                 VaporEncryptCommand::class,
