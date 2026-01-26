@@ -2,6 +2,7 @@
 
 namespace Newms87\Danx\Exceptions;
 
+use GuzzleHttp\Exception\ConnectException;
 use Newms87\Danx\Api\Api;
 use Newms87\Danx\Helpers\StringHelper;
 use GuzzleHttp\Exception\RequestException;
@@ -28,16 +29,16 @@ class ApiRequestException extends \Exception
 	/** @var array $requestJson The associative array representing the JSON formatted contents of the request body (null if not JSON format) */
 	protected $requestJson;
 
-    protected ResponseInterface $response;
+    protected ?ResponseInterface $response = null;
 
 	public function __construct(
 		$apiName,
-		RequestException $exception,
+		RequestException|ConnectException $exception,
 		$message = "",
 	)
 	{
 		$request  = $exception->getRequest();
-		$response = $exception->getResponse();
+		$response = $exception instanceof RequestException ? $exception->getResponse() : null;
 
 		if ($response) {
 			$this->contents = (string)$response->getBody();
@@ -53,7 +54,7 @@ class ApiRequestException extends \Exception
 		$messageTitle = "$apiName API Request Failed";
 
 		$message = $messageTitle . "\n" .
-			Api::formatRequest($request, $exception->getResponse(), $message);
+			Api::formatRequest($request, $response, $message);
 
 		parent::__construct($message, $exception->getCode(), $exception);
 	}

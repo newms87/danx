@@ -35,6 +35,9 @@ abstract class Api
     // Default request timeout in seconds. Can be overridden in extending classes.
     protected int $requestTimeout = 60;
 
+    // Per-request timeout override. Set via setNextTimeout(), reset after each request.
+    protected ?int $nextRequestTimeout = null;
+
     const string
         METHOD_DELETE  = 'DELETE',
         METHOD_GET     = 'GET',
@@ -477,6 +480,17 @@ LUA;
         return $this;
     }
 
+    /**
+     * Set the timeout for the next request only.
+     * This overrides the default requestTimeout for one request, then resets.
+     */
+    public function setNextTimeout(int $timeout): static
+    {
+        $this->nextRequestTimeout = $timeout;
+
+        return $this;
+    }
+
     public function mergeQueryParamsFromUrl(string $url, array $queryParams = []): array
     {
         $uri = parse_url($url);
@@ -518,6 +532,11 @@ LUA;
         $queryParams       = $this->queryParams;
         $this->queryParams = [];
 
+        // Capture and reset per-request timeout, tracking the source for debugging
+        $timeoutSource = $this->nextRequestTimeout !== null ? 'setNextTimeout()' : 'requestTimeout';
+        $timeout       = $this->nextRequestTimeout ?? $this->requestTimeout;
+        $this->nextRequestTimeout = null;
+
         $client = $this->client();
 
         // Be sure to reset a temporarily overridden client
@@ -529,14 +548,19 @@ LUA;
                 $options['debug'] = true;
             }
 
+            // Apply per-request timeout if not already in options
+            if (!isset($options['timeout'])) {
+                $options['timeout'] = $timeout;
+            }
+
             $url = (!empty($this->prefixUri) ? rtrim($this->prefixUri, '/') . '/' : '') . $endpoint;
 
             $queryParams = $this->mergeQueryParamsFromUrl($url, $queryParams);
 
             $startTime = microtime(true);
 
-            // Log request start so we can see what's in progress if the job gets killed
-            static::logDebug("Request started: {$type} {$this->baseApiUrl}/{$url} timeout={$this->requestTimeout}s");
+            // Log request start with timeout source for debugging
+            static::logDebug("Request started: {$type} {$this->baseApiUrl}/{$url} timeout={$timeout}s (from {$timeoutSource})");
 
             $this->response = $client->request(
                 $type,
@@ -550,30 +574,22 @@ LUA;
             // Log successful completion with timing
             $elapsed = round(microtime(true) - $startTime, 3);
             static::logDebug("Request completed: {$type} {$this->baseApiUrl}/{$url} elapsed={$elapsed}s status=" . $this->response->getStatusCode());
-        } catch (RequestException $exception) {
+        } catch (RequestException|ConnectException $exception) {
             $elapsed   = round(microtime(true) - $startTime, 3);
             $isTimeout = $this->isTimeoutException($exception);
+            $errorType = $isTimeout ? 'timeout' : ($exception instanceof ConnectException ? 'connection_error' : 'request_error');
 
-            static::logWarning("Request failed: {$type} {$this->baseApiUrl}/{$url} elapsed={$elapsed}s is_timeout=" . ($isTimeout ? 'true' : 'false') . " timeout={$this->requestTimeout}s");
+            static::logWarning("Request failed: {$type} {$this->baseApiUrl}/{$url} elapsed={$elapsed}s is_timeout=" . ($isTimeout ? 'true' : 'false') . " timeout={$timeout}s (from {$timeoutSource})");
 
             if ($this->currentApiLog) {
-                ApiLog::logResponseError($this->currentApiLog, $exception, $isTimeout ? 'timeout' : 'request_error');
+                ApiLog::logResponseError($this->currentApiLog, $exception, $errorType);
             }
 
-            // Handle timeout-specific errors first (both ConnectException and RequestException)
-            if ($isTimeout) {
-                throw new ApiRequestException(
-                    $this->getServiceName(),
-                    $exception,
-                    'Request timed out'
-                );
-            }
+            $message = $isTimeout
+                ? "Request timed out after {$timeout}s (from {$timeoutSource})"
+                : ($exception instanceof ConnectException ? 'Connection failed' : '');
 
-            throw new ApiRequestException(
-                $this->getServiceName(),
-                $exception,
-                ''
-            );
+            throw new ApiRequestException($this->getServiceName(), $exception, $message);
         }
 
         return $this;
@@ -670,18 +686,10 @@ LUA;
 
     /**
      * Check if an exception is a timeout error
-     * Based on Guzzle best practices: ConnectException for connection timeouts,
-     * RequestException without response for request timeouts
      */
-    private function isTimeoutException(RequestException $exception): bool
+    private function isTimeoutException(RequestException|ConnectException $exception): bool
     {
-        // ConnectException typically indicates connection timeout (among other connection issues)
-        if (!$exception->hasResponse() || $exception instanceof ConnectException) {
-            // Additional check for timeout-specific errors in ConnectException
-            return preg_match('/(time out|timed out|timeout)/', $exception->getMessage()) ||
-                str_contains($exception->getMessage(), 'cURL error 28');
-        }
-
-        return false;
+        // Check for timeout indicators in the exception message
+        return preg_match('/(time out|timed out|timeout|cURL error 28)/', $exception->getMessage()) === 1;
     }
 }
