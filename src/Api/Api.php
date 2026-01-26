@@ -234,17 +234,20 @@ LUA;
      */
     public function client($options = [])
     {
+        // These options must be set per-request, not on the cached client
+        $perRequestOptions = ['headers', 'base_uri', 'timeout'];
+        foreach ($perRequestOptions as $option) {
+            if (isset($options[$option])) {
+                throw new Exception("Do not pass '$option' to client(). Use the appropriate method instead: " . match ($option) {
+                    'headers'  => 'override getRequestHeaders()',
+                    'base_uri' => 'set \$this->baseApiUrl',
+                    'timeout'  => 'use setNextTimeout() or set \$this->requestTimeout',
+                });
+            }
+        }
+
         if (!$this->client) {
             $options['handler'] = $this->createHandler();
-
-            $options['headers'] = ($options['headers'] ?? []) + $this->getRequestHeaders();
-
-            $options['base_uri'] = $this->baseApiUrl ?: $this->getBaseApiUrl();
-
-            // Apply the default timeout if not explicitly set in options
-            if (!isset($options['timeout'])) {
-                $options['timeout'] = $this->requestTimeout;
-            }
 
             // Force cURL to use poll/select-based timeouts instead of SIGALRM.
             // This prevents conflicts with pcntl_alarm() used by Laravel's queue worker,
@@ -548,19 +551,20 @@ LUA;
                 $options['debug'] = true;
             }
 
-            // Apply per-request timeout if not already in options
-            if (!isset($options['timeout'])) {
-                $options['timeout'] = $timeout;
-            }
+            // Apply per-request options (not cached on client)
+            $options['timeout'] = $options['timeout'] ?? $timeout;
+            $options['headers'] = ($options['headers'] ?? []) + $this->getRequestHeaders();
 
-            $url = (!empty($this->prefixUri) ? rtrim($this->prefixUri, '/') . '/' : '') . $endpoint;
+            // Build full URL with base URI and prefix
+            $baseUrl = $this->baseApiUrl ?: $this->getBaseApiUrl();
+            $url     = rtrim($baseUrl, '/') . '/' . (!empty($this->prefixUri) ? rtrim($this->prefixUri, '/') . '/' : '') . $endpoint;
 
             $queryParams = $this->mergeQueryParamsFromUrl($url, $queryParams);
 
             $startTime = microtime(true);
 
             // Log request start with timeout source for debugging
-            static::logDebug("Request started: {$type} {$this->baseApiUrl}/{$url} timeout={$timeout}s (from {$timeoutSource})");
+            static::logDebug("Request started: {$type} {$url} timeout={$timeout}s (from {$timeoutSource})");
 
             $this->response = $client->request(
                 $type,
@@ -573,13 +577,13 @@ LUA;
 
             // Log successful completion with timing
             $elapsed = round(microtime(true) - $startTime, 3);
-            static::logDebug("Request completed: {$type} {$this->baseApiUrl}/{$url} elapsed={$elapsed}s status=" . $this->response->getStatusCode());
+            static::logDebug("Request completed: {$type} {$url} elapsed={$elapsed}s status=" . $this->response->getStatusCode());
         } catch (RequestException|ConnectException $exception) {
             $elapsed   = round(microtime(true) - $startTime, 3);
             $isTimeout = $this->isTimeoutException($exception);
             $errorType = $isTimeout ? 'timeout' : ($exception instanceof ConnectException ? 'connection_error' : 'request_error');
 
-            static::logWarning("Request failed: {$type} {$this->baseApiUrl}/{$url} elapsed={$elapsed}s is_timeout=" . ($isTimeout ? 'true' : 'false') . " timeout={$timeout}s (from {$timeoutSource})");
+            static::logWarning("Request failed: {$type} {$url} elapsed={$elapsed}s is_timeout=" . ($isTimeout ? 'true' : 'false') . " timeout={$timeout}s (from {$timeoutSource})");
 
             if ($this->currentApiLog) {
                 ApiLog::logResponseError($this->currentApiLog, $exception, $errorType);
