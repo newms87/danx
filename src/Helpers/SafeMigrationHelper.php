@@ -466,7 +466,7 @@ class SafeMigrationHelper
         // The estimated remaining time in seconds
         $seconds = round($transactionsRemaining * $avgTime / 1000);
 
-        return DateHelper::timeToString($seconds);
+        return DateHelper::formatDuration((int)($seconds * 1000), 's');
     }
 
     /**

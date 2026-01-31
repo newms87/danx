@@ -14,6 +14,8 @@ use Newms87\Danx\Traits\HasDebugLogging;
 use Newms87\Danx\Exceptions\ApiException;
 use Newms87\Danx\Exceptions\ApiRequestException;
 use Newms87\Danx\Helpers\ConsoleHelper;
+use Newms87\Danx\Helpers\DateHelper;
+use Newms87\Danx\Helpers\FileHelper;
 use Newms87\Danx\Helpers\StringHelper;
 use Newms87\Danx\Models\Audit\ApiLog;
 use Psr\Http\Message\RequestInterface;
@@ -490,7 +492,6 @@ LUA;
     public function setNextTimeout(int $timeout): static
     {
         $this->nextRequestTimeout = $timeout;
-        static::logDebug("setNextTimeout({$timeout}s) called - will apply to next request");
 
         return $this;
     }
@@ -576,9 +577,11 @@ LUA;
                 ]
             );
 
-            // Log successful completion with timing
-            $elapsed = round(microtime(true) - $startTime, 3);
-            static::logDebug("Request completed: {$type} {$url} elapsed={$elapsed}s status=" . $this->response->getStatusCode());
+            // Log successful completion with timing and size
+            $elapsedMs = (int)round((microtime(true) - $startTime) * 1000);
+            $size = $this->response->getBody()->getSize() ?? strlen($this->response->getBody()->getContents());
+            $this->response->getBody()->rewind();
+            static::logDebug("Response (" . FileHelper::getHumanSize($size) . " in " . DateHelper::formatDuration($elapsedMs) . "): {$type} " . $this->response->getStatusCode() . " {$url}");
         } catch (RequestException|ConnectException $exception) {
             $elapsed   = round(microtime(true) - $startTime, 3);
             $isTimeout = $this->isTimeoutException($exception);

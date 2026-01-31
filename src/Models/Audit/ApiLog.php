@@ -82,12 +82,7 @@ class ApiLog extends Model
     ): ApiLog {
         $runTimeMs = ($apiLog->started_at ?? now())->diffInMilliseconds(now());
 
-        static::logDebug('logResponse', [
-            'api_log_id'  => $apiLog->id,
-            'status_code' => $response->getStatusCode(),
-            'run_time_ms' => $runTimeMs,
-            'body_length' => $response->getBody()->getSize(),
-        ]);
+        static::logDebug("Created $apiLog");
 
         $apiLog->update([
             'status_code'      => $response->getStatusCode(),
@@ -109,16 +104,7 @@ class ApiLog extends Model
      */
     public static function logResponseError(ApiLog $apiLog, Throwable $exception, $errorType = 'request_error'): void
     {
-        static::logError('Request Failed: ' . StringHelper::logSafeString($exception->getMessage()));
-
-        $runTimeMs = ($apiLog->started_at ?? now())->diffInMilliseconds(now());
-        static::logDebug('logResponseError', [
-            'api_log_id'      => $apiLog->id,
-            'error_type'      => $errorType,
-            'run_time_ms'     => $runTimeMs,
-            'exception_class' => get_class($exception),
-            'exception_msg'   => substr($exception->getMessage(), 0, 500),
-        ]);
+        static::logError("Failed $apiLog: " . StringHelper::logSafeString($exception->getMessage()));
 
         $apiLog->update([
             'status_code' => method_exists($exception, 'getResponse') ? ($exception->getResponse()?->getStatusCode() ?? 0) : 0,
@@ -178,9 +164,6 @@ class ApiLog extends Model
 
     public function __toString()
     {
-        $request  = json_encode($this->request);
-        $response = json_encode($this->response);
-
-        return "$this->method $this->status_code $this->url\n\nRequest:\n$request\n\nResponse:\n$response";
+        return "<ApiLog id='$this->id' $this->method $this->status_code $this->url>";
     }
 }

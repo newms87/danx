@@ -92,38 +92,6 @@ class DateHelper
 	{
 		return round($endDate->endOfDay()->diffInHours($startDate->startOfDay()) / 24);
 	}
-
-	/**
-	 * Display a timestamp as a human-readable string in format "X h Y m Z s W ms"
-	 *
-	 * @param     $time
-	 * @param int $unit
-	 * @return string
-	 */
-	public static function timeToString($time, $unit = self::TIMER_SECOND)
-	{
-		$milliseconds = $unit === self::TIMER_MILLISECOND ? $time : false;
-
-		$unitsPerHour   = 3600 * $unit;
-		$unitsPerMinute = 60 * $unit;
-
-		$hours = floor($time / $unitsPerHour);
-		$time  -= $hours * $unitsPerHour;
-
-		$minutes = floor($time / $unitsPerMinute);
-		$time    -= $minutes * $unitsPerMinute;
-
-		$seconds = $milliseconds ? floor($time / $unit) : $time / $unit;
-
-		$milliseconds %= 1000;
-
-		return
-			trim(($hours ? "$hours h " : '') .
-				($minutes ? "$minutes m " : '') .
-				((!$milliseconds || ($seconds >= 1)) ? "$seconds s " : '') .
-				($milliseconds !== false ? "$milliseconds ms" : ''));
-	}
-
 	/**
 	 * Get string value for Week From Date
 	 *
@@ -299,6 +267,65 @@ class DateHelper
 	}
 
 	/**
+	 * Format a duration in milliseconds to a human-readable string.
+	 * Always shows verbose format with all units down to the smallest specified.
+	 *
+	 * Examples (with ms - default):
+	 *   550ms, 1s 300ms, 4s 0ms, 5m 0s 200ms, 12m 30s 0ms, 4h 0m 0s 0ms
+	 *
+	 * Examples (without ms - rounded):
+	 *   1s, 4s, 5m 0s, 12m 30s, 4h 0m 0s
+	 *
+	 * Examples (without seconds - rounded):
+	 *   1m, 5m, 12m, 4h 0m
+	 *
+	 * @param int    $ms      Duration in milliseconds
+	 * @param string $minUnit Smallest unit to show: 'ms', 's', or 'm'. Smaller units are rounded.
+	 */
+	public static function formatDuration(int $ms, string $minUnit = 'ms'): string
+	{
+		// Round based on minimum unit
+		if ($minUnit === 's') {
+			$ms = (int)round($ms / 1000) * 1000;
+		} elseif ($minUnit === 'm') {
+			$ms = (int)round($ms / 60000) * 60000;
+		}
+
+		$totalSeconds = (int)floor($ms / 1000);
+		$milliseconds = $ms % 1000;
+
+		$hours   = (int)floor($totalSeconds / 3600);
+		$minutes = (int)floor(($totalSeconds % 3600) / 60);
+		$seconds = $totalSeconds % 60;
+
+		$parts = [];
+
+		if ($hours > 0) {
+			$parts[] = "{$hours}h";
+			$parts[] = "{$minutes}m";
+			$parts[] = "{$seconds}s";
+			if ($minUnit === 'ms') {
+				$parts[] = "{$milliseconds}ms";
+			}
+		} elseif ($minutes > 0) {
+			$parts[] = "{$minutes}m";
+			$parts[] = "{$seconds}s";
+			if ($minUnit === 'ms') {
+				$parts[] = "{$milliseconds}ms";
+			}
+		} elseif ($seconds > 0 || $minUnit !== 'ms') {
+			$parts[] = "{$seconds}s";
+			if ($minUnit === 'ms') {
+				$parts[] = "{$milliseconds}ms";
+			}
+		} else {
+			$parts[] = "{$milliseconds}ms";
+		}
+
+		return implode(' ', $parts);
+	}
+
+	/**
 	 * Resets the timer
 	 */
 	public static function timerReset($name = 'default')
@@ -344,9 +371,11 @@ class DateHelper
 		$timeSinceLast    = round($currentTimestamp - ($lastTimestamp[$name] ?? 0), $precision);
 
 		// Show the current timing since the last timestamp
-		$str = static::timeToString($timeSinceLast, $unit);
+		$ms = $unit === self::TIMER_MILLISECOND ? (int)$timeSinceLast : (int)($timeSinceLast * 1000);
+		$str = static::formatDuration($ms);
 		// Show the total time since the timer was started
-		$str .= ' (' . static::timeToString($currentTimestamp, $unit) . ')';
+		$totalMs = $unit === self::TIMER_MILLISECOND ? (int)$currentTimestamp : (int)($currentTimestamp * 1000);
+		$str .= ' (' . static::formatDuration($totalMs) . ')';
 
 		$lastTimestamp[$name] = $currentTimestamp;
 
