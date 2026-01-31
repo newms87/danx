@@ -218,7 +218,7 @@ class SyncJob extends Model
 
 			$this->syncSuccessful();
 		} catch(Throwable $e) {
-			static::logWarning("SyncJob failed: " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
+			static::logWarning("SyncJob failed: $this", ['exception' => $e]);
 			throw $e;
 		} finally {
 			LockHelper::release($this);

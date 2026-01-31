@@ -4,7 +4,6 @@ namespace Newms87\Danx\Models\Job;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Newms87\Danx\Helpers\DateHelper;
 use Newms87\Danx\Models\Audit\AuditRequest;
 
 class JobDispatch extends Model
@@ -114,9 +113,7 @@ class JobDispatch extends Model
 
     public function __toString(): string
     {
-        $createdAt = DateHelper::formatDateTime($this->created_at);
-
-        return "<JobDispatch $this->id ($this->ref) status='$this->status' count='$this->count' tag='$this->job_tag' created='$createdAt'>";
+        return "<JobDispatch id='$this->id' ref='$this->ref' status='$this->status'>";
     }
 
     public static function booted()

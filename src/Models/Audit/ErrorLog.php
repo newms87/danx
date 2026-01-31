@@ -196,12 +196,7 @@ class ErrorLog extends Model
 		}
 
 		if ($errorLog) {
-			static::logError(
-				$errorLog->level . " " . basename($errorLog) . " ($errorLog->code)\n\n" .
-				"$errorLog->message\n\n" .
-				"$errorLog->file:$errorLog->line" .
-				(config('danx.logging.output_exception_traces') ? "\n\n" . $exception->getTraceAsString() . "\n" : '')
-			);
+			static::logError("$errorLog: $errorLog->message", ['exception' => $exception]);
 		}
 
 		return $errorLog;
@@ -310,6 +305,6 @@ class ErrorLog extends Model
 
 	public function __toString(): string
 	{
-		return "ErrorLog ($this->id): $this->level $this->code $this->error_class";
+		return "<ErrorLog id='$this->id' level='$this->level' class='$this->error_class'>";
 	}
 }
