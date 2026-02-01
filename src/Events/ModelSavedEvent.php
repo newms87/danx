@@ -7,8 +7,11 @@ use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Foundation\Events\Dispatchable;
 use Illuminate\Queue\SerializesModels;
-use Illuminate\Support\Facades\Cache;
+use Newms87\Danx\Audit\AuditDriver;
+use Newms87\Danx\Exceptions\StaleLockException;
+use Newms87\Danx\Helpers\LockHelper;
 use Newms87\Danx\Traits\BroadcastsWithSubscriptions;
+use Newms87\Danx\Traits\HasDebugLogging;
 
 /**
  * Base class for model update events with Pusher broadcasting
@@ -23,7 +26,45 @@ use Newms87\Danx\Traits\BroadcastsWithSubscriptions;
  */
 abstract class ModelSavedEvent implements ShouldBroadcast
 {
-    use BroadcastsWithSubscriptions, Dispatchable, InteractsWithSockets, SerializesModels;
+    use BroadcastsWithSubscriptions, Dispatchable, HasDebugLogging, InteractsWithSockets, SerializesModels;
+
+    /**
+     * Tracks which model instances have already broadcasted a 'created' event.
+     * Keyed by model class and ID to prevent setting attributes on the model.
+     *
+     * @var array<string, bool>
+     */
+    protected static array $broadcastedCreateCache = [];
+
+    /**
+     * Max seconds to wait for lock acquisition during deduplication.
+     * Override in subclass if needed.
+     */
+    protected int $lockWaitTime = 5;
+
+    /**
+     * Polling interval in milliseconds when waiting for lock.
+     * Override in subclass if needed.
+     */
+    protected int $lockPollMs = 100;
+
+    /**
+     * Lock TTL in seconds. Lock auto-expires after this time.
+     * Override in subclass if needed.
+     */
+    protected int $lockTtl = 60;
+
+    /**
+     * Audit request ID captured at event construction time for traceability.
+     * This identifies which request/job initiated the broadcast.
+     */
+    protected ?int $auditRequestId;
+
+    /**
+     * Timestamp when the broadcast was initiated (not when actually sent).
+     * Captured at construction time to track timing even when queued.
+     */
+    protected string $broadcastedAt;
 
     /**
      * @param  Model  $model  The model instance (e.g., WorkflowRun, TaskRun)
@@ -33,6 +74,9 @@ abstract class ModelSavedEvent implements ShouldBroadcast
      */
     public function __construct(protected Model $model, protected string $event, protected ?string $resourceClass = null, protected ?int $teamId = null)
     {
+        // Capture traceability data at construction time (before queuing)
+        $this->auditRequestId = AuditDriver::getAuditRequest()?->id;
+        $this->broadcastedAt = now()->toIso8601String();
     }
 
     /**
@@ -44,17 +88,48 @@ abstract class ModelSavedEvent implements ShouldBroadcast
     }
 
     /**
-     * Determine the event type based on model state
+     * Determine the event type based on model state.
+     *
+     * For the same model instance, the first call returns 'created' if wasRecentlyCreated is true,
+     * and subsequent calls return 'updated'. This prevents multiple 'created' events when a model
+     * is saved multiple times within the same request/job.
      */
     public static function getEvent(Model $model): string
     {
         if ($model->wasRecentlyCreated) {
+            // Check if we've already broadcasted 'created' for this instance
+            if (static::hasBroadcastedCreate($model)) {
+                return 'updated';
+            }
+
             return 'created';
         } elseif ($model->exists) {
             return 'updated';
         }
 
         return 'deleted';
+    }
+
+    /**
+     * Check if a model has already broadcasted a 'created' event.
+     */
+    protected static function hasBroadcastedCreate(Model $model): bool
+    {
+        $key = get_class($model) . ':' . $model->getKey();
+
+        return static::$broadcastedCreateCache[$key] ?? false;
+    }
+
+    /**
+     * Mark the model as having broadcasted a 'created' event.
+     *
+     * Call this after broadcasting a 'created' event to ensure subsequent
+     * saves on the same instance emit 'updated' instead of 'created'.
+     */
+    public static function markCreatedBroadcast(Model $model): void
+    {
+        $key = get_class($model) . ':' . $model->getKey();
+        static::$broadcastedCreateCache[$key] = true;
     }
 
     /**
@@ -65,33 +140,54 @@ abstract class ModelSavedEvent implements ShouldBroadcast
      */
     public static function broadcast(Model $model, ?string $event = null): void
     {
-        broadcast(new static($model, $event ?? static::getEvent($model)));
-    }
+        $eventType = $event ?? static::getEvent($model);
+        broadcast(new static($model, $eventType));
 
-    /**
-     * Dispatch the event with a lock to prevent duplicate broadcasts
-     *
-     * @param  Model  $model  The model instance
-     * @param  string|null  $event  Optional event type override ('created', 'updated', 'deleted')
-     */
-    public static function dispatch(Model $model, ?string $event = null): void
-    {
-        $lockKey = static::lockKey($model);
-        $lock = Cache::lock($lockKey, 5);
-
-        if ($lock->get()) {
-            event(new static($model, $event ?? static::getEvent($model)));
+        // Mark 'created' as broadcasted so subsequent saves emit 'updated'
+        if ($eventType === 'created') {
+            static::markCreatedBroadcast($model);
         }
     }
 
     /**
-     * Determine which channels to broadcast on
-     * Uses subscription system to find subscribed users
+     * Override Dispatchable trait's dispatch() to redirect to broadcast().
+     * This ensures any lingering dispatch() calls still work correctly.
+     *
+     * @param  Model  $model  The model instance
+     * @param  string|null  $event  Optional event type override
+     */
+    public static function dispatch(Model $model, ?string $event = null): void
+    {
+        static::broadcast($model, $event);
+    }
+
+    /**
+     * Determine which channels to broadcast on.
+     *
+     * Uses subscription system to find subscribed users. Also implements
+     * deduplication: if this event is stale (a newer event has already been
+     * sent or is being sent), returns empty array to skip broadcasting.
      */
     public function broadcastOn()
     {
+        // Attempt to acquire timestamped lock for deduplication
+        try {
+            LockHelper::acquireWithTimestamp(
+                static::lockKey($this->model),
+                $this->broadcastedAt,
+                waitTime: $this->lockWaitTime,
+                pollMs: $this->lockPollMs,
+                ttl: $this->lockTtl
+            );
+        } catch (StaleLockException $e) {
+            // This event is stale - a newer event has already been sent or is being sent
+            static::logDebug("Stale event skipped: " . static::lockKey($this->model) . " (ts={$this->broadcastedAt})");
+
+            return [];
+        }
+
         $resourceType = $this->getResourceType();
-        $teamId       = $this->getTeamId();
+        $teamId = $this->getTeamId();
 
         $userIds = $this->getSubscribedUsers(
             $resourceType,
@@ -100,7 +196,14 @@ abstract class ModelSavedEvent implements ShouldBroadcast
             get_class($this->model)
         );
 
-        return $this->getSubscribedChannels($resourceType, $teamId, $userIds);
+        $channels = $this->getSubscribedChannels($resourceType, $teamId, $userIds);
+
+        // If no channels to broadcast to, release the lock now since broadcastWith() won't be called
+        if (empty($channels)) {
+            LockHelper::releaseWithTimestamp(static::lockKey($this->model));
+        }
+
+        return $channels;
     }
 
     /**
@@ -112,15 +215,26 @@ abstract class ModelSavedEvent implements ShouldBroadcast
     }
 
     /**
-     * Get the data to broadcast with the event
+     * Get the data to broadcast with the event.
+     *
+     * Refreshes the model to get latest data, then releases locks.
      */
     public function broadcastWith()
     {
+        // Refresh model to get latest data at broadcast time
+        $this->model->refresh();
+
         $data = $this->data();
-        Cache::lock(static::lockKey($this->model))->forceRelease();
+
+        // Release the timestamped lock and record when we sent
+        LockHelper::releaseWithTimestamp(static::lockKey($this->model));
 
         // Include the user who triggered this event so frontend can filter out own events
         $data['triggered_by_user_id'] = auth()->id();
+
+        // Include traceability data captured at construction time
+        $data['__audit_request_id'] = $this->auditRequestId;
+        $data['__broadcasted_at'] = $this->broadcastedAt;
 
         return $data;
     }

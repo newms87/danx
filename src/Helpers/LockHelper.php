@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Newms87\Danx\Exceptions\LockException;
+use Newms87\Danx\Exceptions\StaleLockException;
 use Throwable;
 
 /**
@@ -126,5 +127,103 @@ class LockHelper
 		} else {
 			return $key;
 		}
+	}
+
+	/**
+	 * Acquire a timestamped lock for event deduplication.
+	 *
+	 * This method is designed for scenarios where multiple events may be queued
+	 * for the same resource, and only the most recent should be sent. It uses
+	 * timestamps to determine which request should proceed:
+	 *
+	 * - If our timestamp < last_sent_at: We're stale (newer event already sent) → StaleLockException
+	 * - If our timestamp < lock's timestamp: We're stale (newer event is sending) → StaleLockException
+	 * - If our timestamp > lock's timestamp: We're fresher → wait for lock release
+	 * - If lock is free: Acquire and proceed
+	 *
+	 * @param  Model|string  $key        The lock key
+	 * @param  string        $timestamp  ISO8601 timestamp when this request was initiated
+	 * @param  int           $waitTime   Max seconds to wait if fresher (default 5)
+	 * @param  int           $pollMs     Polling interval in ms (default 100)
+	 * @param  int           $ttl        Lock TTL in seconds (default 60)
+	 * @return bool True if lock acquired
+	 *
+	 * @throws StaleLockException If our timestamp < lock's timestamp (we're stale)
+	 * @throws LockException If we timeout waiting for lock
+	 */
+	public static function acquireWithTimestamp(
+		Model|string $key,
+		string $timestamp,
+		int $waitTime = 5,
+		int $pollMs = 100,
+		int $ttl = 60
+	): bool {
+		$key = self::resolveKey($key);
+		$lockKey = "ts-lock:$key";
+		$lastSentKey = "ts-last-sent:$key";
+
+		// Check if we're already stale compared to last sent
+		$lastSentAt = Cache::get($lastSentKey);
+		if ($lastSentAt && $timestamp < $lastSentAt) {
+			throw new StaleLockException($key, $timestamp, $lastSentAt);
+		}
+
+		$startTime = microtime(true);
+		$pollSeconds = $pollMs / 1000;
+
+		while (true) {
+			// Try to acquire the lock with our timestamp as the value
+			$acquired = Cache::add($lockKey, $timestamp, $ttl);
+
+			if ($acquired) {
+				Log::debug("🔴🔒 TS-ACQUIRED: $key (ts=$timestamp)");
+
+				return true;
+			}
+
+			// Lock is held - check the holder's timestamp
+			$lockedTimestamp = Cache::get($lockKey);
+
+			if (!$lockedTimestamp) {
+				// Lock was just released, try again
+				continue;
+			}
+
+			// If we're stale compared to current holder, abort
+			if ($timestamp < $lockedTimestamp) {
+				throw new StaleLockException($key, $timestamp, $lockedTimestamp);
+			}
+
+			// We're fresher - wait for the lock to be released
+			$elapsed = microtime(true) - $startTime;
+			if ($elapsed >= $waitTime) {
+				Log::error("🔴🔒 TS-TIMEOUT: $key (waited {$waitTime}s)");
+				throw new LockException($key, $waitTime);
+			}
+
+			Log::debug("🟡🔒 TS-WAIT: $key (polling, elapsed=" . round($elapsed, 2) . "s)");
+			usleep($pollMs * 1000);
+		}
+	}
+
+	/**
+	 * Release a timestamped lock and record when it was sent.
+	 *
+	 * @param  Model|string  $key        The lock key
+	 * @param  int           $lastSentTtl  TTL for the last_sent_at marker (default 60 seconds)
+	 */
+	public static function releaseWithTimestamp(Model|string $key, int $lastSentTtl = 60): void
+	{
+		$key = self::resolveKey($key);
+		$lockKey = "ts-lock:$key";
+		$lastSentKey = "ts-last-sent:$key";
+
+		// Record when we sent, so future stale events can be rejected
+		Cache::put($lastSentKey, now()->toIso8601String(), $lastSentTtl);
+
+		// Release the lock
+		Cache::forget($lockKey);
+
+		Log::debug("🟢🔒 TS-RELEASED: $key");
 	}
 }
