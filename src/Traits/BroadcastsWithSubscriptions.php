@@ -5,6 +5,7 @@ namespace Newms87\Danx\Traits;
 use Illuminate\Broadcasting\PrivateChannel;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Cache;
+use Newms87\Danx\Events\ModelSavedEvent;
 
 trait BroadcastsWithSubscriptions
 {
@@ -83,9 +84,16 @@ trait BroadcastsWithSubscriptions
 
             // Apply filter to model and check if it matches
             try {
-                $matches = $modelClass::filter($filter)
-                    ->where('id', $model->id)
-                    ->exists();
+                // For deleted events, the model no longer exists in DB so we do in-memory attribute matching
+                // Use property_exists to avoid undefined property access in non-event contexts
+                $isDeletedEvent = property_exists($this, 'event') && $this->event === ModelSavedEvent::EVENT_DELETED;
+                if ($isDeletedEvent) {
+                    $matches = $this->matchesFilterInMemory($model, $filter);
+                } else {
+                    $matches = $modelClass::filter($filter)
+                        ->where('id', $model->id)
+                        ->exists();
+                }
 
                 if ($matches) {
                     $subscribers = Cache::get($filterKey, []);
@@ -98,6 +106,37 @@ trait BroadcastsWithSubscriptions
         }
 
         return $userIds;
+    }
+
+    /**
+     * Check if a model matches a filter using in-memory attribute comparison.
+     * Used for deleted events where the model no longer exists in the database.
+     *
+     * @param  Model  $model  The model instance (with attributes still in memory)
+     * @param  array  $filter  The filter definition
+     * @return bool Whether the model matches the filter
+     */
+    protected function matchesFilterInMemory(Model $model, array $filter): bool
+    {
+        foreach ($filter as $key => $value) {
+            // Skip special filter operators (and, or, etc.)
+            if (in_array($key, ['and', 'or'])) {
+                continue;
+            }
+
+            $modelValue = $model->getAttribute($key);
+
+            // Handle array values (e.g., id: [1, 2, 3])
+            if (is_array($value)) {
+                if (!in_array($modelValue, $value)) {
+                    return false;
+                }
+            } elseif ($modelValue != $value) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**

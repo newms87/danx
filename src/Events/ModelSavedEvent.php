@@ -6,7 +6,6 @@ use Illuminate\Broadcasting\InteractsWithSockets;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Foundation\Events\Dispatchable;
-use Illuminate\Queue\SerializesModels;
 use Newms87\Danx\Audit\AuditDriver;
 use Newms87\Danx\Exceptions\StaleLockException;
 use Newms87\Danx\Helpers\LockHelper;
@@ -26,7 +25,11 @@ use Newms87\Danx\Traits\HasDebugLogging;
  */
 abstract class ModelSavedEvent implements ShouldBroadcast
 {
-    use BroadcastsWithSubscriptions, Dispatchable, HasDebugLogging, InteractsWithSockets, SerializesModels;
+    use BroadcastsWithSubscriptions, Dispatchable, HasDebugLogging, InteractsWithSockets;
+
+    public const EVENT_CREATED = 'created';
+    public const EVENT_UPDATED = 'updated';
+    public const EVENT_DELETED = 'deleted';
 
     /**
      * Tracks which model instances have already broadcasted a 'created' event.
@@ -67,6 +70,14 @@ abstract class ModelSavedEvent implements ShouldBroadcast
     protected string $broadcastedAt;
 
     /**
+     * Stored model references for serialization.
+     * Maps property name to [class, id, attributes] for restoration.
+     *
+     * @var array<string, array{class: string, id: mixed, attributes: array}>
+     */
+    protected array $serializedModels = [];
+
+    /**
      * @param  Model  $model  The model instance (e.g., WorkflowRun, TaskRun)
      * @param  string  $event  The event name (e.g., 'updated', 'created')
      * @param  string|null  $resourceClass  The Resource class (e.g., WorkflowRunResource::class)
@@ -80,11 +91,101 @@ abstract class ModelSavedEvent implements ShouldBroadcast
     }
 
     /**
-     * Get the cache lock key for this model
+     * Custom serialization - convert Model properties to class/id/attributes references.
+     * This avoids serializing entire model objects while preserving data for restoration.
+     */
+    public function __serialize(): array
+    {
+        $data = [];
+        $serializedModels = [];
+
+        foreach (get_object_vars($this) as $key => $value) {
+            if ($value instanceof Model) {
+                // Store model reference for restoration
+                $serializedModels[$key] = [
+                    'class'      => get_class($value),
+                    'id'         => $value->getKey(),
+                    'attributes' => $value->getAttributes(),
+                ];
+                $data[$key] = null; // Don't serialize the model object
+            } else {
+                $data[$key] = $value;
+            }
+        }
+
+        // Include serializedModels in the serialized data
+        $data['serializedModels'] = $serializedModels;
+
+        return $data;
+    }
+
+    /**
+     * Custom unserialization - restore Model properties from DB (with trashed support).
+     * Falls back to stored attributes if model not found in DB (hard deleted).
+     */
+    public function __unserialize(array $data): void
+    {
+        // Extract serializedModels first
+        $serializedModels = $data['serializedModels'] ?? [];
+        unset($data['serializedModels']);
+
+        // Restore all non-model properties (skip model placeholders)
+        foreach ($data as $key => $value) {
+            if (!isset($serializedModels[$key])) {
+                $this->$key = $value;
+            }
+        }
+
+        // Restore model properties from DB or attributes
+        foreach ($serializedModels as $key => $modelData) {
+            $this->$key = $this->restoreModelFromData($modelData);
+        }
+    }
+
+    /**
+     * Restore a model from serialized data.
+     * Uses withTrashed() for soft-delete support, falls back to attributes if not found.
+     */
+    protected function restoreModelFromData(array $modelData): Model
+    {
+        $class = $modelData['class'];
+        $id = $modelData['id'];
+        $attributes = $modelData['attributes'];
+
+        // Try to fetch from DB (with trashed for soft-delete support)
+        $query = $class::query();
+        if (method_exists($class, 'withTrashed')) {
+            $query->withTrashed();
+        }
+
+        $model = $query->find($id);
+
+        if ($model) {
+            return $model;
+        }
+
+        // Model not in DB (hard deleted) - restore from stored attributes
+        $model = new $class();
+        $model->setRawAttributes($attributes, true);
+        $model->exists = false;
+
+        return $model;
+    }
+
+    /**
+     * Get the cache lock key for a model instance
      */
     public static function lockKey(Model $model): string
     {
         return 'model-saved:' . $model->getTable() . ':' . $model->getKey();
+    }
+
+    /**
+     * Get the lock key for this event instance
+     */
+    protected function getLockKey(): string
+    {
+        return static::lockKey($this->model);
     }
 
     /**
@@ -99,15 +200,15 @@ abstract class ModelSavedEvent implements ShouldBroadcast
         if ($model->wasRecentlyCreated) {
             // Check if we've already broadcasted 'created' for this instance
             if (static::hasBroadcastedCreate($model)) {
-                return 'updated';
+                return self::EVENT_UPDATED;
             }
 
-            return 'created';
+            return self::EVENT_CREATED;
         } elseif ($model->exists) {
-            return 'updated';
+            return self::EVENT_UPDATED;
         }
 
-        return 'deleted';
+        return self::EVENT_DELETED;
     }
 
     /**
@@ -144,7 +245,7 @@ abstract class ModelSavedEvent implements ShouldBroadcast
         broadcast(new static($model, $eventType));
 
         // Mark 'created' as broadcasted so subsequent saves emit 'updated'
-        if ($eventType === 'created') {
+        if ($eventType === self::EVENT_CREATED) {
             static::markCreatedBroadcast($model);
         }
     }
@@ -164,24 +265,15 @@ abstract class ModelSavedEvent implements ShouldBroadcast
     /**
      * Determine which channels to broadcast on.
      *
-     * Uses subscription system to find subscribed users. Also implements
-     * deduplication: if this event is stale (a newer event has already been
-     * sent or is being sent), returns empty array to skip broadcasting.
+     * Uses subscription system to find subscribed users. Does a quick stale check
+     * (without locking) to skip obviously stale events. Full deduplication with
+     * locking happens in broadcastWith().
      */
     public function broadcastOn()
     {
-        // Attempt to acquire timestamped lock for deduplication
-        try {
-            LockHelper::acquireWithTimestamp(
-                static::lockKey($this->model),
-                $this->broadcastedAt,
-                waitTime: $this->lockWaitTime,
-                pollMs: $this->lockPollMs,
-                ttl: $this->lockTtl
-            );
-        } catch (StaleLockException $e) {
-            // This event is stale - a newer event has already been sent or is being sent
-            static::logDebug("Stale event skipped: " . static::lockKey($this->model) . " (ts={$this->broadcastedAt})");
+        // Quick stale check - if an event was already sent after this one was created, skip
+        if (LockHelper::isStaleTimestamp($this->getLockKey(), $this->broadcastedAt)) {
+            static::logDebug("Stale event skipped in broadcastOn: {$this->getLockKey()} (ts={$this->broadcastedAt})");
 
             return [];
         }
@@ -196,14 +288,7 @@ abstract class ModelSavedEvent implements ShouldBroadcast
             get_class($this->model)
         );
 
-        $channels = $this->getSubscribedChannels($resourceType, $teamId, $userIds);
-
-        // If no channels to broadcast to, release the lock now since broadcastWith() won't be called
-        if (empty($channels)) {
-            LockHelper::releaseWithTimestamp(static::lockKey($this->model));
-        }
-
-        return $channels;
+        return $this->getSubscribedChannels($resourceType, $teamId, $userIds);
     }
 
     /**
@@ -217,38 +302,78 @@ abstract class ModelSavedEvent implements ShouldBroadcast
     /**
      * Get the data to broadcast with the event.
      *
-     * Refreshes the model to get latest data, then releases locks.
+     * Acquires a timestamped lock for deduplication, refreshes model for latest data,
+     * and releases lock in finally block. If this event is stale (a newer event is
+     * being sent or was already sent), returns minimal skip payload.
      */
     public function broadcastWith()
     {
-        // Refresh model to get latest data at broadcast time
-        $this->model->refresh();
+        $lockKey = $this->getLockKey();
 
-        $data = $this->data();
+        // Acquire lock for deduplication - ensures only freshest event broadcasts
+        try {
+            LockHelper::acquireWithTimestamp(
+                $lockKey,
+                $this->broadcastedAt,
+                waitTime: $this->lockWaitTime,
+                pollMs: $this->lockPollMs,
+                ttl: $this->lockTtl
+            );
+        } catch (StaleLockException $e) {
+            // This event is stale - a newer event has already been sent or is being sent
+            static::logDebug("Stale event skipped in broadcastWith: $lockKey (ts={$this->broadcastedAt})");
 
-        // Release the timestamped lock and record when we sent
-        LockHelper::releaseWithTimestamp(static::lockKey($this->model));
+            // Return minimal payload - event still fires but frontend should ignore
+            return ['__stale' => true, 'id' => $this->model->getKey(), '__model' => get_class($this->model)];
+        }
 
-        // Include the user who triggered this event so frontend can filter out own events
-        $data['triggered_by_user_id'] = auth()->id();
+        try {
+            // Refresh model to get latest data at broadcast time (skip for deleted models)
+            if ($this->event !== self::EVENT_DELETED) {
+                $this->model->refresh();
+            }
 
-        // Include traceability data captured at construction time
-        $data['__audit_request_id'] = $this->auditRequestId;
-        $data['__broadcasted_at'] = $this->broadcastedAt;
+            $data = $this->data();
 
-        return $data;
+            // Include the user who triggered this event so frontend can filter out own events
+            $data['triggered_by_user_id'] = auth()->id();
+
+            // Include traceability data captured at construction time
+            $data['__audit_request_id'] = $this->auditRequestId;
+            $data['__broadcasted_at'] = $this->broadcastedAt;
+
+            return $data;
+        } finally {
+            // Always release the lock
+            LockHelper::releaseWithTimestamp($lockKey);
+        }
     }
 
     /**
-     * Get broadcast payload - automatically calls createdData() or updatedData() based on event type
+     * Get broadcast payload - automatically calls createdData(), updatedData(), or deletedData() based on event type
      */
     public function data(): array
     {
         return match ($this->event) {
-            'created' => $this->createdData(),
-            'updated' => $this->updatedData(),
-            default   => $this->updatedData(),
+            self::EVENT_CREATED => $this->createdData(),
+            self::EVENT_UPDATED => $this->updatedData(),
+            self::EVENT_DELETED => $this->deletedData(),
+            default             => $this->updatedData(),
         };
+    }
+
+    /**
+     * Data to broadcast on 'deleted' events.
+     * Override this method to customize delete payloads.
+     * Default: ID, resource type, and deleted_at timestamp (model no longer exists in DB).
+     */
+    protected function deletedData(): array
+    {
+        return [
+            'id'         => $this->model->getKey(),
+            '__type'     => $this->getResourceType(),
+            'deleted_at' => $this->broadcastedAt,
+        ];
     }
 
     /**

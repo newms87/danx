@@ -207,6 +207,24 @@ class LockHelper
 	}
 
 	/**
+	 * Check if a timestamp is stale (older than the last sent timestamp).
+	 * This is a quick check without acquiring any locks.
+	 *
+	 * @param  Model|string  $key        The lock key
+	 * @param  string        $timestamp  The timestamp to check
+	 * @return bool True if the timestamp is stale
+	 */
+	public static function isStaleTimestamp(Model|string $key, string $timestamp): bool
+	{
+		$key = self::resolveKey($key);
+		$lastSentKey = "ts-last-sent:$key";
+
+		$lastSentAt = Cache::get($lastSentKey);
+
+		return $lastSentAt && $timestamp < $lastSentAt;
+	}
+
+	/**
 	 * Release a timestamped lock and record when it was sent.
 	 *
 	 * @param  Model|string  $key        The lock key
