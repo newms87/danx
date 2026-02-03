@@ -5,6 +5,7 @@ namespace Newms87\Danx\Support;
 use Illuminate\Support\Facades\DB;
 use Newms87\Danx\Audit\AuditDriver;
 use Newms87\Danx\Models\Audit\AuditRequest;
+use Newms87\Danx\Models\Job\JobDispatch;
 use Newms87\Danx\Traits\HasDebugLogging;
 
 /**
@@ -33,10 +34,12 @@ class Heartbeat
     private int $childPid = 0;
     private string $operationId;
     private bool $stopped = false;
+    private ?int $jobDispatchId = null;
 
-    private function __construct(string $operationId)
+    private function __construct(string $operationId, ?int $jobDispatchId = null)
     {
         $this->operationId = $operationId;
+        $this->jobDispatchId = $jobDispatchId;
     }
 
     /**
@@ -44,11 +47,12 @@ class Heartbeat
      *
      * @param string   $operationId     Identifier for the operation being monitored
      * @param int|null $intervalSeconds Override interval (uses config default if null)
+     * @param int|null $jobDispatchId   JobDispatch ID to mark as timeout if parent dies
      * @return self
      */
-    public static function start(string $operationId, ?int $intervalSeconds = null): self
+    public static function start(string $operationId, ?int $intervalSeconds = null, ?int $jobDispatchId = null): self
     {
-        $instance = new self($operationId);
+        $instance = new self($operationId, $jobDispatchId);
 
         if (!$instance->isEnabled()) {
             self::logDebug("Heartbeat DISABLED via config for {$operationId}");
@@ -126,7 +130,7 @@ class Heartbeat
         $parentPid = getmypid();
         $startTime = time();
 
-        self::logDebug("Forking heartbeat process (audit_request_id={$auditRequestId}, interval={$intervalSeconds}s)");
+        self::logDebug("Forking heartbeat process (audit_request_id={$auditRequestId}, interval={$intervalSeconds}s, job_dispatch_id={$this->jobDispatchId})");
 
         DB::disconnect();
 
@@ -139,7 +143,7 @@ class Heartbeat
         }
 
         if ($pid === 0) {
-            $this->runHeartbeatLoop($parentPid, $this->operationId, $intervalSeconds, $startTime, $auditRequestId);
+            $this->runHeartbeatLoop($parentPid, $this->operationId, $intervalSeconds, $startTime, $auditRequestId, $this->jobDispatchId);
             exit(0);
         }
 
@@ -153,13 +157,15 @@ class Heartbeat
     /**
      * Run the heartbeat loop in the child process.
      * Attaches to the parent's AuditRequest and uses standard debug logging.
+     * If the parent dies unexpectedly, marks the JobDispatch as timed out.
      */
     private function runHeartbeatLoop(
         int $parentPid,
         string $operationId,
         int $intervalSeconds,
         int $startTime,
-        int $auditRequestId
+        int $auditRequestId,
+        ?int $jobDispatchId = null
     ): void {
         pcntl_signal(SIGTERM, function () {
             exit(0);
@@ -185,10 +191,32 @@ class Heartbeat
 
             if ($currentParentPid !== $parentPid) {
                 self::logError("PARENT_DIED #{$heartbeatCount} | {$operationId} | PID:{$parentPid} | {$elapsed}s | {$memoryMb}MB | Parent PID changed to {$currentParentPid}");
+
+                // Mark the JobDispatch as timed out so the task process can be restarted
+                if ($jobDispatchId) {
+                    $this->markJobDispatchAsTimeout($jobDispatchId);
+                }
+
                 exit(1);
             }
 
             self::logDebug("HEARTBEAT #{$heartbeatCount} | {$operationId} | PID:{$parentPid} | {$elapsed}s | {$memoryMb}MB");
+        }
+    }
+
+    /**
+     * Mark a JobDispatch as timed out when the parent process dies unexpectedly.
+     */
+    private function markJobDispatchAsTimeout(int $jobDispatchId): void
+    {
+        try {
+            $jobDispatch = JobDispatch::find($jobDispatchId);
+            if ($jobDispatch && $jobDispatch->status === JobDispatch::STATUS_RUNNING) {
+                $jobDispatch->timeout();
+                self::logDebug("Marked JobDispatch {$jobDispatchId} as timed out due to parent death");
+            }
+        } catch (\Throwable $e) {
+            self::logError("Failed to mark JobDispatch {$jobDispatchId} as timed out: " . $e->getMessage());
         }
     }
 

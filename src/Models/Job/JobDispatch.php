@@ -4,6 +4,7 @@ namespace Newms87\Danx\Models\Job;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Newms87\Danx\Events\JobDispatchUpdatedEvent;
 use Newms87\Danx\Models\Audit\AuditRequest;
 
 class JobDispatch extends Model
@@ -123,6 +124,13 @@ class JobDispatch extends Model
                 $jobDispatch->run_time_ms = $jobDispatch->completed_at && $jobDispatch->ran_at
                     ? $jobDispatch->ran_at->diffInMilliseconds($jobDispatch->completed_at)
                     : null;
+            }
+        });
+
+        static::updated(function (JobDispatch $jobDispatch) {
+            // Dispatch event when status changes to timeout so listeners can restart associated processes
+            if ($jobDispatch->wasChanged('status') && $jobDispatch->status === self::STATUS_TIMEOUT) {
+                JobDispatchUpdatedEvent::dispatch($jobDispatch, 'timeout');
             }
         });
     }

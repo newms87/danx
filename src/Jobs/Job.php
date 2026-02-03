@@ -461,7 +461,7 @@ abstract class Job implements ShouldQueue
         ]);
 
         // Start heartbeat monitoring for the job execution
-        $heartbeat = Heartbeat::start("Job:{$this->jobDispatch->name}|JobDispatch:{$this->jobDispatch->id}");
+        $heartbeat = Heartbeat::start("Job:{$this->jobDispatch->name}|JobDispatch:{$this->jobDispatch->id}", null, $this->jobDispatch->id);
 
         try {
             Job::$runningJob = $this->jobDispatch;
