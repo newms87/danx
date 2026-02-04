@@ -7,61 +7,45 @@ use Throwable;
 /**
  * Checks if exceptions are retryable (transient failures).
  *
- * Supports two modes:
- * 1. Custom service class via config('errors.checker') - delegates entirely to that class
- * 2. Config-based rules via config('errors.retryable') - uses exception class => condition mapping
+ * Supports two checker types configured via danx config:
+ * - api_retryable_checker: For API-level retries (retry loop in Api class)
+ * - job_retryable_checker: For job-level retries (task process restarts)
  *
- * For config caching compatibility, prefer using a custom service class (mode 1).
+ * Each checker class must have a static isRetryable(Throwable): bool method.
  */
 class RetryableErrorChecker
 {
     /**
-     * Check if an exception is retryable.
+     * Check if an exception is retryable for API-level retries.
      *
-     * First checks for a custom checker service class in config('errors.checker').
-     * If set, delegates entirely to that class's isRetryable() method.
-     * Otherwise falls back to config-based rules in config('errors.retryable').
+     * Uses the checker class from config('danx.errors.api_retryable_checker').
+     * Returns false if no checker is configured.
      */
-    public static function isRetryable(Throwable $exception): bool
+    public static function isApiRetryable(Throwable $exception): bool
     {
-        // Check for custom checker service (config-cache compatible)
-        $checkerClass = config('errors.checker');
-        if ($checkerClass && class_exists($checkerClass) && method_exists($checkerClass, 'isRetryable')) {
-            return $checkerClass::isRetryable($exception);
-        }
-
-        // Fall back to config-based rules
-        return static::checkConfigRules($exception);
+        return static::checkWithChecker('api_retryable_checker', $exception);
     }
 
     /**
-     * Check exception against config-based rules.
+     * Check if an exception is retryable for job-level retries.
      *
-     * Note: Using closures in config breaks config:cache. Prefer using
-     * a custom checker service via config('errors.checker') instead.
+     * Uses the checker class from config('danx.errors.job_retryable_checker').
+     * Returns false if no checker is configured.
      */
-    protected static function checkConfigRules(Throwable $exception): bool
+    public static function isJobRetryable(Throwable $exception): bool
     {
-        $retryableConfig = config('errors.retryable', []);
+        return static::checkWithChecker('job_retryable_checker', $exception);
+    }
 
-        foreach ($retryableConfig as $exceptionClass => $condition) {
-            if (!$exception instanceof $exceptionClass) {
-                continue;
-            }
+    /**
+     * Check exception using a configured checker service class.
+     */
+    protected static function checkWithChecker(string $configKey, Throwable $exception): bool
+    {
+        $checkerClass = config("danx.errors.$configKey");
 
-            // If set to true, always retryable
-            if ($condition === true) {
-                return true;
-            }
-
-            // If array of callbacks, check if ANY returns true
-            if (is_array($condition)) {
-                foreach ($condition as $callback) {
-                    if (is_callable($callback) && $callback($exception)) {
-                        return true;
-                    }
-                }
-            }
+        if ($checkerClass && class_exists($checkerClass) && method_exists($checkerClass, 'isRetryable')) {
+            return $checkerClass::isRetryable($exception);
         }
 
         return false;

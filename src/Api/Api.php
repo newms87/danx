@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\Redis;
 use Newms87\Danx\Traits\HasDebugLogging;
 use Newms87\Danx\Exceptions\ApiException;
 use Newms87\Danx\Exceptions\ApiRequestException;
+use Newms87\Danx\Services\Error\RetryableErrorChecker;
 use Newms87\Danx\Helpers\ConsoleHelper;
 use Newms87\Danx\Helpers\DateHelper;
 use Newms87\Danx\Helpers\FileHelper;
@@ -39,6 +40,12 @@ abstract class Api
 
     // Per-request timeout override. Set via setNextTimeout(), reset after each request.
     protected ?int $nextRequestTimeout = null;
+
+    // Default retry count from config (or 0 if not configured).
+    protected int $retryCount = 0;
+
+    // Per-request retry count override. Set via retryCount(), reset after each request.
+    protected ?int $nextRetryCount = null;
 
     const string
         METHOD_DELETE  = 'DELETE',
@@ -496,6 +503,42 @@ LUA;
         return $this;
     }
 
+    /**
+     * Set the retry count for the next request only.
+     * This overrides the default retryCount for one request, then resets.
+     */
+    public function retryCount(int $count): static
+    {
+        $this->nextRetryCount = $count;
+
+        return $this;
+    }
+
+    /**
+     * Get the effective retry count for the current request.
+     * Returns per-request override if set, otherwise class default or config default.
+     */
+    protected function getEffectiveRetryCount(): int
+    {
+        if ($this->nextRetryCount !== null) {
+            return $this->nextRetryCount;
+        }
+
+        if ($this->retryCount > 0) {
+            return $this->retryCount;
+        }
+
+        return (int) config('danx.errors.api_retry_count', 0);
+    }
+
+    /**
+     * Get the retry delay in milliseconds.
+     */
+    protected function getRetryDelayMs(): int
+    {
+        return (int) config('danx.errors.api_retry_delay_ms', 1000);
+    }
+
     public function mergeQueryParamsFromUrl(string $url, array $queryParams = []): array
     {
         $uri = parse_url($url);
@@ -510,7 +553,12 @@ LUA;
     }
 
     /**
-     * Make a request to the endpoint
+     * Make a request to the endpoint with automatic retry for transient failures.
+     *
+     * Retry behavior is controlled by:
+     * - config('danx.errors.api_retry_count') - default retry count
+     * - config('danx.errors.api_retry_delay_ms') - delay between retries
+     * - config('danx.errors.api_retryable_checker') - service to determine if error is retryable
      *
      * @throws ApiException
      * @throws ApiRequestException
@@ -542,65 +590,94 @@ LUA;
         $timeout       = $this->nextRequestTimeout ?? $this->requestTimeout;
         $this->nextRequestTimeout = null;
 
+        // Capture and reset per-request retry count
+        $maxRetries           = $this->getEffectiveRetryCount();
+        $this->nextRetryCount = null;
+
         $client = $this->client();
 
         // Be sure to reset a temporarily overridden client
         $this->overrideClient = null;
 
-        try {
-            // Enable request debugging
-            if ($this->debug) {
-                $options['debug'] = true;
-            }
-
-            // Apply per-request options (not cached on client)
-            $options['timeout'] = $options['timeout'] ?? $timeout;
-            $options['headers'] = ($options['headers'] ?? []) + $this->getRequestHeaders();
-
-            // Build full URL with base URI and prefix
-            $baseUrl = $this->baseApiUrl ?: $this->getBaseApiUrl();
-            $url     = rtrim($baseUrl, '/') . '/' . (!empty($this->prefixUri) ? rtrim($this->prefixUri, '/') . '/' : '') . $endpoint;
-
-            $queryParams = $this->mergeQueryParamsFromUrl($url, $queryParams);
-
-            $startTime = microtime(true);
-
-            // Log request start with timeout source for debugging
-            static::logDebug("Request started: {$type} {$url} timeout={$timeout}s (from {$timeoutSource})");
-
-            $this->response = $client->request(
-                $type,
-                $url,
-                $options + [
-                    'query' => $queryParams,
-                    'body'  => $body,
-                ]
-            );
-
-            // Log successful completion with timing and size
-            $elapsedMs = (int)round((microtime(true) - $startTime) * 1000);
-            $size = $this->response->getBody()->getSize() ?? strlen($this->response->getBody()->getContents());
-            $this->response->getBody()->rewind();
-            static::logDebug("Response (" . FileHelper::getHumanSize($size) . " in " . DateHelper::formatDuration($elapsedMs) . "): {$type} " . $this->response->getStatusCode() . " {$url}");
-        } catch (RequestException|ConnectException $exception) {
-            $elapsed   = round(microtime(true) - $startTime, 3);
-            $isTimeout = $this->isTimeoutException($exception);
-            $errorType = $isTimeout ? 'timeout' : ($exception instanceof ConnectException ? 'connection_error' : 'request_error');
-
-            static::logWarning("Request failed: {$type} {$url} elapsed={$elapsed}s is_timeout=" . ($isTimeout ? 'true' : 'false') . " timeout={$timeout}s (from {$timeoutSource})");
-
-            if ($this->currentApiLog) {
-                ApiLog::logResponseError($this->currentApiLog, $exception, $errorType);
-            }
-
-            $message = $isTimeout
-                ? "Request timed out after {$timeout}s (from {$timeoutSource})"
-                : ($exception instanceof ConnectException ? 'Connection failed' : '');
-
-            throw new ApiRequestException($this->getServiceName(), $exception, $message);
+        // Enable request debugging
+        if ($this->debug) {
+            $options['debug'] = true;
         }
 
-        return $this;
+        // Apply per-request options (not cached on client)
+        $options['timeout'] = $options['timeout'] ?? $timeout;
+        $options['headers'] = ($options['headers'] ?? []) + $this->getRequestHeaders();
+
+        // Build full URL with base URI and prefix
+        $baseUrl = $this->baseApiUrl ?: $this->getBaseApiUrl();
+        $url     = rtrim($baseUrl, '/') . '/' . (!empty($this->prefixUri) ? rtrim($this->prefixUri, '/') . '/' : '') . $endpoint;
+
+        $queryParams = $this->mergeQueryParamsFromUrl($url, $queryParams);
+
+        $requestOptions = $options + [
+            'query' => $queryParams,
+            'body'  => $body,
+        ];
+
+        // Retry loop for transient failures
+        $attempt       = 0;
+        $lastException = null;
+
+        while ($attempt <= $maxRetries) {
+            $attempt++;
+
+            try {
+                $startTime = microtime(true);
+
+                // Log request start with timeout source for debugging
+                $retryInfo = $maxRetries > 0 ? " attempt={$attempt}/" . ($maxRetries + 1) : '';
+                static::logDebug("Request started: {$type} {$url} timeout={$timeout}s (from {$timeoutSource}){$retryInfo}");
+
+                $this->response = $client->request($type, $url, $requestOptions);
+
+                // Log successful completion with timing and size
+                $elapsedMs = (int)round((microtime(true) - $startTime) * 1000);
+                $size = $this->response->getBody()->getSize() ?? strlen($this->response->getBody()->getContents());
+                $this->response->getBody()->rewind();
+                static::logDebug("Response (" . FileHelper::getHumanSize($size) . " in " . DateHelper::formatDuration($elapsedMs) . "): {$type} " . $this->response->getStatusCode() . " {$url}");
+
+                return $this;
+            } catch (RequestException|ConnectException $exception) {
+                $elapsed   = round(microtime(true) - $startTime, 3);
+                $isTimeout = $this->isTimeoutException($exception);
+                $errorType = $isTimeout ? 'timeout' : ($exception instanceof ConnectException ? 'connection_error' : 'request_error');
+
+                // Wrap in ApiRequestException for consistent error handling
+                $message = $isTimeout
+                    ? "Request timed out after {$timeout}s (from {$timeoutSource})"
+                    : ($exception instanceof ConnectException ? 'Connection failed' : '');
+                $lastException = new ApiRequestException($this->getServiceName(), $exception, $message);
+
+                // Log the error
+                static::logWarning("Request failed: {$type} {$url} elapsed={$elapsed}s is_timeout=" . ($isTimeout ? 'true' : 'false') . " timeout={$timeout}s (from {$timeoutSource})");
+
+                if ($this->currentApiLog) {
+                    ApiLog::logResponseError($this->currentApiLog, $exception, $errorType);
+                }
+
+                // Check if we should retry
+                $hasRetriesRemaining = $attempt <= $maxRetries;
+                $isRetryable         = RetryableErrorChecker::isApiRetryable($lastException);
+
+                if ($hasRetriesRemaining && $isRetryable) {
+                    $delayMs = $this->getRetryDelayMs();
+                    static::logDebug("[RETRYABLE] Will retry in {$delayMs}ms (attempt {$attempt}/{$maxRetries}): " . StringHelper::limitText(200, $lastException->getMessage()));
+                    usleep($delayMs * 1000);
+
+                    continue;
+                }
+
+                // No more retries or not retryable - throw
+                break;
+            }
+        }
+
+        throw $lastException;
     }
 
     /**

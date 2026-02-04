@@ -64,4 +64,21 @@ return [
 	'logging' => [
 		'output_exception_traces' => env('LOG_OUTPUT_EXCEPTION_TRACES', false),
 	],
+
+	/*
+	 * Error handling configuration for API requests and job-level retries.
+	 */
+	'errors' => [
+		// Service class for checking API error retryability (must have static isRetryable(Throwable): bool)
+		'api_retryable_checker' => null,
+
+		// Service class for checking job error retryability (for task process restarts)
+		'job_retryable_checker' => null,
+
+		// Default retry count for API requests (0 = no retries)
+		'api_retry_count' => (int) env('API_RETRY_COUNT', 3),
+
+		// Delay between retry attempts in milliseconds
+		'api_retry_delay_ms' => (int) env('API_RETRY_DELAY_MS', 1000),
+	],
 ];

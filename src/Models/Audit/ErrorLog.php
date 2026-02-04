@@ -186,7 +186,7 @@ class ErrorLog extends Model
 		}
 
 		// Check if the exception is retryable
-		$isRetryable = RetryableErrorChecker::isRetryable($exception);
+		$isRetryable = RetryableErrorChecker::isJobRetryable($exception);
 
 		$errorLog = self::log($errorLog, $message, $data, $isRetryable);
 
