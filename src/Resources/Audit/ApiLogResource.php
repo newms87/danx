@@ -12,6 +12,7 @@ class ApiLogResource extends ActionResource
         return [
             'api_class'        => $apiLog->api_class,
             'service_name'     => $apiLog->service_name,
+            'endpoint'         => $apiLog->endpoint,
             'status_code'      => $apiLog->status_code,
             'method'           => $apiLog->method,
             'url'              => $apiLog->full_url,

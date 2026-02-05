@@ -51,13 +51,15 @@ class ApiLog extends Model
         $apiClass,
         $serviceName,
         RequestInterface $request,
-        ?int $timeoutSeconds = null
+        ?int $timeoutSeconds = null,
+        ?string $endpoint = null
     ): ApiLog {
         $apiLog = ApiLog::create([
             'audit_request_id' => AuditDriver::getAuditRequest()?->id,
             'user_id'          => user()?->id,
             'api_class'        => $apiClass,
             'service_name'     => $serviceName,
+            'endpoint'         => $endpoint,
             'url'              => substr($request->getUri(), 0, 512),
             'full_url'         => $request->getUri(),
             'status_code'      => null,
@@ -160,6 +162,82 @@ class ApiLog extends Model
     public function auditRequest()
     {
         return $this->belongsTo(AuditRequest::class);
+    }
+
+    /**
+     * Check if this API log is an LLM endpoint based on configured services.
+     * Uses config('danx.llm_api_services') mapping of api_class => [endpoints].
+     *
+     * For backwards compatibility with existing data (where endpoint may be NULL),
+     * also matches by URL pattern when endpoint is not set.
+     */
+    public function isLlmEndpoint(): bool
+    {
+        $llmServices = config('danx.llm_api_services', []);
+
+        foreach ($llmServices as $apiClass => $endpoints) {
+            if ($this->api_class !== $apiClass) {
+                continue;
+            }
+
+            // If no endpoints specified, all logs from this API class count
+            if (empty($endpoints)) {
+                return true;
+            }
+
+            // Check endpoint field
+            if ($this->endpoint && in_array($this->endpoint, $endpoints, true)) {
+                return true;
+            }
+
+            // Fallback: check URL pattern for logs without endpoint field
+            if (!$this->endpoint) {
+                foreach ($endpoints as $endpoint) {
+                    if (str_contains($this->url ?? '', '/' . $endpoint)) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Scope to filter API logs for LLM interactions based on configured services and endpoints.
+     * Uses config('danx.llm_api_services') mapping of api_class => [endpoints].
+     *
+     * For backwards compatibility with existing data (where endpoint may be NULL),
+     * also matches by URL pattern when endpoint is not set.
+     */
+    public function scopeLlmEndpoints(Builder $query): Builder
+    {
+        $llmServices = config('danx.llm_api_services', []);
+
+        if (empty($llmServices)) {
+            return $query->whereRaw('1 = 0'); // No LLM services configured
+        }
+
+        return $query->where(function (Builder $q) use ($llmServices) {
+            foreach ($llmServices as $apiClass => $endpoints) {
+                $q->orWhere(function (Builder $subQ) use ($apiClass, $endpoints) {
+                    $subQ->where('api_class', $apiClass);
+                    if (!empty($endpoints)) {
+                        // Match by endpoint field OR by URL pattern (for existing data with NULL endpoint)
+                        $subQ->where(function (Builder $endpointQuery) use ($endpoints) {
+                            $endpointQuery->whereIn('endpoint', $endpoints);
+                            // Fallback: match URL pattern when endpoint is NULL
+                            foreach ($endpoints as $endpoint) {
+                                $endpointQuery->orWhere(function (Builder $urlQuery) use ($endpoint) {
+                                    $urlQuery->whereNull('endpoint')
+                                        ->where('url', 'like', '%/' . $endpoint . '%');
+                                });
+                            }
+                        });
+                    }
+                });
+            }
+        });
     }
 
     public function __toString()

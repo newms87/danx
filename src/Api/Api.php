@@ -90,6 +90,9 @@ abstract class Api
     // The API log created for the currently running / most recently executed request
     protected ?ApiLog $currentApiLog = null;
 
+    // The endpoint for the current request (stored before request for logging)
+    protected ?string $currentEndpoint = null;
+
     /** @var array Registered callbacks for each GET request */
     protected array $onGetCallbacks = [];
 
@@ -294,7 +297,8 @@ LUA;
                     static::class,
                     $this->getServiceName(),
                     $request,
-                    $timeout
+                    $timeout,
+                    $this->currentEndpoint
                 );
             } catch (Exception $exception) {
                 static::logError(
@@ -580,6 +584,9 @@ LUA;
         $this->throttle();
 
         $this->response = null;
+
+        // Store endpoint for API logging (used by handleRequest)
+        $this->currentEndpoint = $endpoint;
 
         // Reset the query params
         $queryParams       = $this->queryParams;
