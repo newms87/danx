@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Newms87\Danx\Events\JobDispatchUpdatedEvent;
 use Newms87\Danx\Models\Job\JobDispatch;
+use Newms87\Danx\Models\Team\Team;
 use Newms87\Danx\Traits\HasRelationCountersTrait;
 use Newms87\Danx\Traits\HasVirtualFields;
 use Newms87\Danx\Traits\SerializesDates;
@@ -54,6 +55,11 @@ class AuditRequest extends Model
 	public function user()
 	{
 		return $this->belongsTo(config('auth.providers.users.model'));
+	}
+
+	public function team()
+	{
+		return $this->belongsTo(config('danx.models.team', Team::class));
 	}
 
 	/**
