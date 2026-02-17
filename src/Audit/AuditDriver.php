@@ -226,6 +226,41 @@ class AuditDriver implements AuditDriverContract
 	}
 
 	/**
+	 * Create a child audit request parented to the given audit request ID.
+	 * Used by ProcessFork to give each forked child its own isolated audit context.
+	 *
+	 * Sets AuditDriver::$auditRequest to the new child, so all subsequent logs,
+	 * API logs, and errors in this process are attributed to the child.
+	 */
+	public static function createChildAuditRequest(int $parentId, string $url): ?AuditRequest
+	{
+		if (!config('danx.audit.enabled')) {
+			return null;
+		}
+
+		try {
+			self::$auditRequest = AuditRequest::create([
+				'parent_id'   => $parentId,
+				'session_id'  => self::getSessionUuid(),
+				'user_id'     => user()?->id,
+				'team_id'     => team()?->id,
+				'environment' => app()->environment(),
+				'url'         => substr($url, 0, 512),
+				'request'     => [],
+				'time'        => 0,
+			]);
+
+			return self::$auditRequest;
+		} catch (Exception $e) {
+			if (config('danx.audit.debug')) {
+				static::logDebug("Failed to create child audit request: " . $e->getMessage());
+			}
+
+			return null;
+		}
+	}
+
+	/**
 	 * Creates the Audit Request object only once per client request and returns the original request
 	 * object on subsequent calls
 	 *

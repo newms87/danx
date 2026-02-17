@@ -9,12 +9,11 @@ use Newms87\Danx\Resources\Job\JobDispatchResource;
 class AuditRequestResource extends ActionResource
 {
     /**
-     * Traces the ancestor chain from the given audit request up to the root HTTP request.
+     * Traces the ancestor chain from the given audit request up to the root.
      * Returns an ordered array of audit request IDs from root to the current request (inclusive).
      *
-     * The chain is resolved by following ranJobs → dispatch_audit_request_id links:
-     * each audit request that ran a job was dispatched by a parent audit request.
-     * The root is an HTTP request with no ranJobs (it was not dispatched by another request).
+     * Uses the direct parent_id chain. Falls back to the legacy JobDispatch chain
+     * for audit requests created before parent_id was added.
      */
     public static function resolveAncestorIds(AuditRequest $auditRequest): array
     {
@@ -23,6 +22,21 @@ class AuditRequestResource extends ActionResource
         $limit   = 20;
 
         while ($limit-- > 0) {
+            // Prefer direct parent_id link
+            if ($current->parent_id) {
+                $parent = AuditRequest::find($current->parent_id);
+
+                if (!$parent) {
+                    break;
+                }
+
+                $ids[]   = $parent->id;
+                $current = $parent;
+
+                continue;
+            }
+
+            // Legacy fallback: trace through JobDispatch chain
             $ranJob = $current->ranJobs()->first();
 
             if (!$ranJob || !$ranJob->dispatch_audit_request_id) {
@@ -35,7 +49,7 @@ class AuditRequestResource extends ActionResource
                 break;
             }
 
-            $ids[]  = $parent->id;
+            $ids[]   = $parent->id;
             $current = $parent;
         }
 
@@ -46,6 +60,7 @@ class AuditRequestResource extends ActionResource
     {
         return [
             'id'                    => $auditRequest->id,
+            'parent_id'             => $auditRequest->parent_id,
             'session_id'            => $auditRequest->session_id,
             'user_id'               => $auditRequest->user_id,
             'user_name'             => $auditRequest->user ? $auditRequest->user->email . ' (' . $auditRequest->user_id . ')' : 'N/A',
@@ -66,6 +81,7 @@ class AuditRequestResource extends ActionResource
             'ran_jobs_count'        => $auditRequest->ranJobs()->count(),
             'dispatched_jobs_count' => $auditRequest->dispatchedJobs()->count(),
             'errors_count'          => $auditRequest->errorLogEntries()->count(),
+            'children_count'        => $auditRequest->children()->count(),
             'created_at'            => $auditRequest->created_at,
             'updated_at'            => $auditRequest->updated_at,
 
@@ -76,6 +92,7 @@ class AuditRequestResource extends ActionResource
             'ran_jobs'        => fn() => JobDispatchResource::collection($auditRequest->ranJobs),
             'dispatched_jobs' => fn() => JobDispatchResource::collection($auditRequest->dispatchedJobs),
             'errors'          => fn() => ErrorLogEntryResource::collection($auditRequest->errorLogEntries),
+            'children'        => fn() => static::collection($auditRequest->children),
         ];
     }
 }

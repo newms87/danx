@@ -3,6 +3,7 @@
 namespace Newms87\Danx\Models\Audit;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Newms87\Danx\Events\JobDispatchUpdatedEvent;
 use Newms87\Danx\Models\Job\JobDispatch;
@@ -60,6 +61,22 @@ class AuditRequest extends Model
 	public function team()
 	{
 		return $this->belongsTo(config('danx.models.team', Team::class));
+	}
+
+	/**
+	 * The parent audit request that spawned this one (via job dispatch or process fork).
+	 */
+	public function parent(): BelongsTo
+	{
+		return $this->belongsTo(static::class, 'parent_id');
+	}
+
+	/**
+	 * Child audit requests spawned by this one (via job dispatches or process forks).
+	 */
+	public function children(): HasMany
+	{
+		return $this->hasMany(static::class, 'parent_id');
 	}
 
 	/**

@@ -3,6 +3,7 @@
 namespace Newms87\Danx\Support;
 
 use Illuminate\Support\Facades\DB;
+use Newms87\Danx\Audit\AuditDriver;
 use Newms87\Danx\Traits\HasDebugLogging;
 
 /**
@@ -33,15 +34,23 @@ class ProcessFork
      * Each closure receives no arguments and should return a serializable value.
      * Results are returned in the same order as the input tasks array.
      *
+     * When $auditLabel is provided and auditing is enabled, each forked child gets its own
+     * AuditRequest (parented to the current audit request) for isolated logging.
+     * The child's audit_request_id is included in each result entry.
+     *
      * @param  array<callable>  $tasks  Closures to execute in parallel
      * @param  int|null  $maxConcurrent  Max children to run simultaneously (null = all at once)
-     * @return array<array{status: string, result: mixed, error: string|null}>  Results indexed by task position
+     * @param  string|null  $auditLabel  Label prefix for child audit requests (e.g., "IdentityExtraction")
+     * @return array<array{status: string, result: mixed, error: string|null, audit_request_id: int|null}>
      */
-    public static function run(array $tasks, ?int $maxConcurrent = null): array
+    public static function run(array $tasks, ?int $maxConcurrent = null, ?string $auditLabel = null): array
     {
         if (empty($tasks)) {
             return [];
         }
+
+        // Capture parent audit request ID before forking
+        $parentAuditRequestId = $auditLabel ? AuditDriver::$auditRequest?->id : null;
 
         // If pcntl is not available, run sequentially as fallback
         if (!function_exists('pcntl_fork')) {
@@ -58,7 +67,7 @@ class ProcessFork
         $maxConcurrent = $maxConcurrent ?? count($tasks);
         $maxConcurrent = max(1, $maxConcurrent);
 
-        return self::forkAndRun($tasks, $maxConcurrent);
+        return self::forkAndRun($tasks, $maxConcurrent, $parentAuditRequestId, $auditLabel);
     }
 
     /**
@@ -85,17 +94,17 @@ class ProcessFork
     /**
      * Build a success result entry.
      */
-    protected static function successResult(mixed $result): array
+    protected static function successResult(mixed $result, ?int $auditRequestId = null): array
     {
-        return ['status' => 'success', 'result' => $result, 'error' => null];
+        return ['status' => 'success', 'result' => $result, 'error' => null, 'audit_request_id' => $auditRequestId];
     }
 
     /**
      * Build an error result entry.
      */
-    protected static function errorResult(string $error): array
+    protected static function errorResult(string $error, ?int $auditRequestId = null): array
     {
-        return ['status' => 'error', 'result' => null, 'error' => $error];
+        return ['status' => 'error', 'result' => null, 'error' => $error, 'audit_request_id' => $auditRequestId];
     }
 
     /**
@@ -107,10 +116,10 @@ class ProcessFork
      * @param  array<callable>  $tasks
      * @return array<array{status: string, result: mixed, error: string|null}>
      */
-    protected static function forkAndRun(array $tasks, int $maxConcurrent): array
+    protected static function forkAndRun(array $tasks, int $maxConcurrent, ?int $parentAuditRequestId = null, ?string $auditLabel = null): array
     {
         $taskCount = count($tasks);
-        $results   = array_fill(0, $taskCount, ['status' => 'error', 'result' => null, 'error' => 'Not started']);
+        $results   = array_fill(0, $taskCount, ['status' => 'error', 'result' => null, 'error' => 'Not started', 'audit_request_id' => null]);
 
         // Create temp files for each child to write results
         $tempFiles = [];
@@ -132,7 +141,8 @@ class ProcessFork
                 $task      = $tasks[$taskIndex];
                 $tempFile  = $tempFiles[$taskIndex];
 
-                $pid = self::forkChild($task, $tempFile);
+                $childAuditLabel = $auditLabel ? "$auditLabel:batch-$taskIndex" : null;
+                $pid             = self::forkChild($task, $tempFile, $parentAuditRequestId, $childAuditLabel);
 
                 if ($pid === null) {
                     // Fork failed — record error, continue with remaining tasks
@@ -180,7 +190,7 @@ class ProcessFork
      *
      * @return int|null  Child PID on success, null on fork failure
      */
-    protected static function forkChild(callable $task, string $tempFile): ?int
+    protected static function forkChild(callable $task, string $tempFile, ?int $parentAuditRequestId = null, ?string $auditLabel = null): ?int
     {
         DB::disconnect();
 
@@ -196,7 +206,7 @@ class ProcessFork
 
         if ($pid === 0) {
             // === CHILD PROCESS ===
-            self::executeInChild($task, $tempFile);
+            self::executeInChild($task, $tempFile, $parentAuditRequestId, $auditLabel);
             exit(0); // Always exit cleanly — never return to parent code path
         }
 
@@ -210,9 +220,11 @@ class ProcessFork
      * Execute a task inside the child process and write the result to a temp file.
      *
      * Installs SIGTERM handler for clean shutdown. Reconnects DB before running the task.
+     * When audit params are provided, creates a child AuditRequest so all logs, API logs,
+     * and errors in this child are isolated from the parent and other children.
      * Serializes the result (or error) to a temp file for the parent to read.
      */
-    protected static function executeInChild(callable $task, string $tempFile): void
+    protected static function executeInChild(callable $task, string $tempFile, ?int $parentAuditRequestId = null, ?string $auditLabel = null): void
     {
         // Install signal handler for clean shutdown (same as Heartbeat)
         pcntl_signal(SIGTERM, function () {
@@ -223,10 +235,24 @@ class ProcessFork
         // Fresh DB connection for this child
         DB::reconnect();
 
+        // Create isolated audit request for this child process
+        $childAuditRequestId = null;
+        if ($parentAuditRequestId && $auditLabel) {
+            AuditDriver::$auditRequest = null;
+            AuditDriver::startTimer();
+            $childAuditRequest   = AuditDriver::createChildAuditRequest($parentAuditRequestId, $auditLabel);
+            $childAuditRequestId = $childAuditRequest?->id;
+        }
+
         try {
-            $data = self::successResult($task());
+            $data = self::successResult($task(), $childAuditRequestId);
         } catch (\Throwable $e) {
-            $data = self::errorResult($e->getMessage());
+            $data = self::errorResult($e->getMessage(), $childAuditRequestId);
+        }
+
+        // Finalize the child audit request (record execution time)
+        if ($childAuditRequestId) {
+            AuditDriver::terminate();
         }
 
         // Write serialized result to temp file — exit non-zero on failure so parent detects it

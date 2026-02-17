@@ -227,9 +227,14 @@ abstract class Job implements ShouldQueue
         // NOW create/get AuditRequest (team() will work correctly)
         AuditDriver::$auditRequest = $this->jobDispatch?->runningAuditRequest ?? AuditDriver::getAuditRequest();
 
-        // Associate the Job dispatch to the running audit request
+        // Associate the Job dispatch to the running audit request, and set parent_id
+        // to the dispatcher's audit request for direct hierarchy traversal
         if (AuditDriver::$auditRequest) {
-            $this->jobDispatch?->update(['running_audit_request_id' => AuditDriver::$auditRequest?->id]);
+            $this->jobDispatch?->update(['running_audit_request_id' => AuditDriver::$auditRequest->id]);
+
+            if ($this->jobDispatch?->dispatch_audit_request_id && !AuditDriver::$auditRequest->parent_id) {
+                AuditDriver::$auditRequest->update(['parent_id' => $this->jobDispatch->dispatch_audit_request_id]);
+            }
         }
 
         $properties = (new ReflectionClass($this))->getProperties();

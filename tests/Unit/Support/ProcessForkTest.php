@@ -31,6 +31,7 @@ class ProcessForkTest extends TestCase
         $this->assertSame('success', $results[0]['status']);
         $this->assertSame(['key' => 'value'], $results[0]['result']);
         $this->assertNull($results[0]['error']);
+        $this->assertNull($results[0]['audit_request_id']);
     }
 
     /**
