@@ -36,7 +36,7 @@ class AuditRequestResource extends ActionResource
                 continue;
             }
 
-            // Legacy fallback: trace through JobDispatch chain
+            // @todo Remove legacy JobDispatch fallback once existing audit_request records are backfilled with parent_id
             $ranJob = $current->ranJobs()->first();
 
             if (!$ranJob || !$ranJob->dispatch_audit_request_id) {
@@ -81,7 +81,7 @@ class AuditRequestResource extends ActionResource
             'ran_jobs_count'        => $auditRequest->ranJobs()->count(),
             'dispatched_jobs_count' => $auditRequest->dispatchedJobs()->count(),
             'errors_count'          => $auditRequest->errorLogEntries()->count(),
-            'children_count'        => $auditRequest->children_count,
+            'children_count'        => $auditRequest->children()->count(),
             'created_at'            => $auditRequest->created_at,
             'updated_at'            => $auditRequest->updated_at,
 

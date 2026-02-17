@@ -19,7 +19,6 @@ class AuditRequest extends Model
 	public array $relationCounters = [
 		ApiLog::class        => ['apiLogs' => 'api_log_count'],
 		ErrorLogEntry::class => ['errorLogEntries' => 'error_log_count'],
-		self::class          => ['children' => 'children_count'],
 	];
 
 	public static function booted(): void

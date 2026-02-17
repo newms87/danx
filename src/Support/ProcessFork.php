@@ -2,7 +2,9 @@
 
 namespace Newms87\Danx\Support;
 
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Redis;
 use Newms87\Danx\Audit\AuditDriver;
 use Newms87\Danx\Traits\HasDebugLogging;
 
@@ -141,7 +143,7 @@ class ProcessFork
                 $task      = $tasks[$taskIndex];
                 $tempFile  = $tempFiles[$taskIndex];
 
-                $childAuditLabel = $auditLabel ? "$auditLabel:batch-$taskIndex" : null;
+                $childAuditLabel = $auditLabel ? "[fork] $auditLabel:batch-$taskIndex" : null;
                 $pid             = self::forkChild($task, $tempFile, $parentAuditRequestId, $childAuditLabel);
 
                 if ($pid === null) {
@@ -193,6 +195,7 @@ class ProcessFork
     protected static function forkChild(callable $task, string $tempFile, ?int $parentAuditRequestId = null, ?string $auditLabel = null): ?int
     {
         DB::disconnect();
+        Redis::purge();
 
         $pid = pcntl_fork();
 
@@ -232,8 +235,10 @@ class ProcessFork
         });
         pcntl_async_signals(true);
 
-        // Fresh DB connection for this child
+        // Fresh DB and Redis connections for this child (forked processes
+        // must not share sockets with the parent — causes corruption)
         DB::reconnect();
+        Cache::forgetDriver();
 
         // Create isolated audit request for this child process
         $childAuditRequestId = null;
