@@ -23,6 +23,7 @@ return new class extends Migration
 
         Schema::table('audit_request', function (Blueprint $table) {
             $table->unsignedBigInteger('parent_id')->nullable()->after('id');
+            $table->unsignedInteger('children_count')->default(0)->after('parent_id');
             $table->foreign('parent_id')->references('id')->on('audit_request')->nullOnDelete();
             $table->index('parent_id');
         });
@@ -32,7 +33,7 @@ return new class extends Migration
     {
         Schema::table('audit_request', function (Blueprint $table) {
             $table->dropForeign(['parent_id']);
-            $table->dropColumn('parent_id');
+            $table->dropColumn(['parent_id', 'children_count']);
         });
     }
 };
