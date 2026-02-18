@@ -99,7 +99,7 @@ class AuditLogHandler extends AbstractProcessingHandler
 			$auditRequest = AuditDriver::getAuditRequest();
 
 			if ($auditRequest) {
-				$timestamp = now()->toDateTimeString();
+				$timestamp = now()->format('Y-m-d H:i:s.v');
 				$entry     = "\n$timestamp $level $message";
 				$entry     = StringHelper::logSafeString($entry, 100000);
 

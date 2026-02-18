@@ -273,7 +273,7 @@ class ProcessFork
      * Redis::purge() without arguments only purges 'default', leaving other connections
      * (like 'cache') with shared sockets between parent and child — causing corruption.
      */
-    protected static function purgeAllRedisConnections(): void
+    public static function purgeAllRedisConnections(): void
     {
         // Disconnect all active connections to close their sockets
         foreach (Redis::connections() as $connection) {

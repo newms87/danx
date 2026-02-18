@@ -2,6 +2,7 @@
 
 namespace Newms87\Danx\Support;
 
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Newms87\Danx\Audit\AuditDriver;
 use Newms87\Danx\Models\Audit\AuditRequest;
@@ -133,6 +134,7 @@ class Heartbeat
         self::logDebug("Forking heartbeat process (audit_request_id={$auditRequestId}, interval={$intervalSeconds}s, job_dispatch_id={$this->jobDispatchId})");
 
         DB::disconnect();
+        ProcessFork::purgeAllRedisConnections();
 
         $pid = pcntl_fork();
 
@@ -172,7 +174,11 @@ class Heartbeat
         });
         pcntl_async_signals(true);
 
+        // Fresh DB and Redis connections for this child (forked processes
+        // must not share sockets with the parent — causes corruption)
         DB::reconnect();
+        ProcessFork::purgeAllRedisConnections();
+        Cache::forgetDriver();
 
         $auditRequest = AuditRequest::find($auditRequestId);
         if ($auditRequest) {

@@ -351,8 +351,13 @@ class DateHelper
 			$name = 'default';
 		}
 
-		$start = self::$timerStart[$name];
-		$end   = microtime(true);
+		$start = self::$timerStart[$name] ?? null;
+
+		if ($start === null) {
+			return 0;
+		}
+
+		$end = microtime(true);
 
 		return round(($end - $start) * $unit, $precision);
 	}
