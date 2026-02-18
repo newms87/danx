@@ -3,6 +3,7 @@
 namespace Newms87\Danx\Logging\Audit;
 
 use Exception;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Monolog\Handler\AbstractProcessingHandler;
 use Monolog\Level;
@@ -23,12 +24,41 @@ class AuditLogHandler extends AbstractProcessingHandler
 	 */
 	private static bool $isWriting = false;
 
+	/**
+	 * Cached trace-enabled flag and timestamp for 10-second TTL check.
+	 * When trace is enabled, this handler accepts DEBUG-level messages
+	 * regardless of its configured minimum level.
+	 */
+	private static bool   $traceEnabled   = false;
+	private static ?float $traceCheckedAt = null;
+
 	public function __construct(
 		$level = Logger::DEBUG,
 		$bubble = true
 	)
 	{
 		parent::__construct($level, $bubble);
+	}
+
+	/**
+	 * Override level gating to support dynamic TRACE toggle.
+	 * When trace is enabled via cache, accept DEBUG-level messages
+	 * even if the handler's configured minimum is higher.
+	 */
+	public function isHandling(LogRecord $record): bool
+	{
+		$now = microtime(true);
+
+		if (self::$traceCheckedAt === null || ($now - self::$traceCheckedAt) > 10) {
+			self::$traceEnabled   = (bool)Cache::get('debug:trace_enabled');
+			self::$traceCheckedAt = $now;
+		}
+
+		if (self::$traceEnabled && $record->level->value >= Level::Debug->value) {
+			return true;
+		}
+
+		return parent::isHandling($record);
 	}
 
 	/**

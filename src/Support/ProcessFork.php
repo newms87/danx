@@ -195,7 +195,7 @@ class ProcessFork
     protected static function forkChild(callable $task, string $tempFile, ?int $parentAuditRequestId = null, ?string $auditLabel = null): ?int
     {
         DB::disconnect();
-        Redis::purge();
+        self::purgeAllRedisConnections();
 
         $pid = pcntl_fork();
 
@@ -238,6 +238,7 @@ class ProcessFork
         // Fresh DB and Redis connections for this child (forked processes
         // must not share sockets with the parent — causes corruption)
         DB::reconnect();
+        self::purgeAllRedisConnections();
         Cache::forgetDriver();
 
         // Create isolated audit request for this child process
@@ -265,6 +266,23 @@ class ProcessFork
         if ($written === false) {
             exit(1);
         }
+    }
+
+    /**
+     * Purge ALL Redis connections (default, cache, queue, etc.) before forking.
+     * Redis::purge() without arguments only purges 'default', leaving other connections
+     * (like 'cache') with shared sockets between parent and child — causing corruption.
+     */
+    protected static function purgeAllRedisConnections(): void
+    {
+        // Disconnect all active connections to close their sockets
+        foreach (Redis::connections() as $connection) {
+            $connection->disconnect();
+        }
+
+        // Purge named connections from the manager's pool
+        Redis::purge('default');
+        Redis::purge('cache');
     }
 
     /**
