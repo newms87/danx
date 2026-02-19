@@ -21,7 +21,7 @@ class AuditRequest extends Model
 	 * Re-entrancy guard to prevent infinite broadcast loops.
 	 * Broadcasting can trigger audit logging → AuditRequest update → saved → broadcast again.
 	 */
-	protected static bool $isBroadcastingUpdate = false;
+	public static bool $isBroadcastingUpdate = false;
 
 	public array $relationCounters = [
 		ApiLog::class        => ['apiLogs' => 'api_log_count'],

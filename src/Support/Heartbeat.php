@@ -5,6 +5,7 @@ namespace Newms87\Danx\Support;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Newms87\Danx\Audit\AuditDriver;
+use Newms87\Danx\Events\AuditRequestUpdatedEvent;
 use Newms87\Danx\Models\Audit\AuditRequest;
 use Newms87\Danx\Models\Job\JobDispatch;
 use Newms87\Danx\Traits\HasDebugLogging;
@@ -207,6 +208,18 @@ class Heartbeat
             }
 
             self::logDebug("HEARTBEAT #{$heartbeatCount} | {$operationId} | PID:{$parentPid} | {$elapsed}s | {$memoryMb}MB");
+
+            // Broadcast after log write so UI sees log updates in real-time.
+            // Use the model's re-entrancy guard since broadcast() itself triggers logging
+            // which could cause the model's updated hook to double-broadcast.
+            if ($auditRequest && !AuditRequest::$isBroadcastingUpdate) {
+                AuditRequest::$isBroadcastingUpdate = true;
+                try {
+                    AuditRequestUpdatedEvent::broadcast($auditRequest);
+                } finally {
+                    AuditRequest::$isBroadcastingUpdate = false;
+                }
+            }
         }
     }
 
