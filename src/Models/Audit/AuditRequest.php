@@ -5,6 +5,7 @@ namespace Newms87\Danx\Models\Audit;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Newms87\Danx\Events\AuditRequestUpdatedEvent;
 use Newms87\Danx\Events\JobDispatchUpdatedEvent;
 use Newms87\Danx\Models\Job\JobDispatch;
 use Newms87\Danx\Models\Team\Team;
@@ -30,6 +31,9 @@ class AuditRequest extends Model
 		});
 
 		static::saved(function (AuditRequest $auditRequest) {
+			AuditRequestUpdatedEvent::broadcast($auditRequest);
+
+			// Propagate count changes to parent JobDispatch cards so their badges update too
 			if ($auditRequest->wasChanged(['api_log_count', 'error_log_count', 'log_line_count'])) {
 				foreach($auditRequest->ranJobs as $jobDispatch) {
 					JobDispatchUpdatedEvent::dispatch($jobDispatch, 'updated');
