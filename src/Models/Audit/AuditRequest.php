@@ -17,6 +17,12 @@ class AuditRequest extends Model
 {
 	use HasRelationCountersTrait, HasVirtualFields, SerializesDates;
 
+	/**
+	 * Re-entrancy guard to prevent infinite broadcast loops.
+	 * Broadcasting can trigger audit logging → AuditRequest update → saved → broadcast again.
+	 */
+	protected static bool $isBroadcastingUpdate = false;
+
 	public array $relationCounters = [
 		ApiLog::class        => ['apiLogs' => 'api_log_count'],
 		ErrorLogEntry::class => ['errorLogEntries' => 'error_log_count'],
@@ -30,8 +36,18 @@ class AuditRequest extends Model
 			}
 		});
 
-		static::saved(function (AuditRequest $auditRequest) {
-			AuditRequestUpdatedEvent::broadcast($auditRequest);
+		// Use 'updated' instead of 'saved' to skip create events — prevents infinite loops
+		// where broadcast queue jobs create new AuditRequests that trigger more broadcasts.
+		// Re-entrancy guard prevents same-process loops from broadcast → audit log → update → broadcast.
+		static::updated(function (AuditRequest $auditRequest) {
+			if (!static::$isBroadcastingUpdate) {
+				static::$isBroadcastingUpdate = true;
+				try {
+					AuditRequestUpdatedEvent::broadcast($auditRequest);
+				} finally {
+					static::$isBroadcastingUpdate = false;
+				}
+			}
 
 			// Propagate count changes to parent JobDispatch cards so their badges update too
 			if ($auditRequest->wasChanged(['api_log_count', 'error_log_count', 'log_line_count'])) {

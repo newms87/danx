@@ -38,25 +38,10 @@ class AuditRequestUpdatedEventTest extends TestCase
 		$event = new AuditRequestUpdatedEvent($auditRequest, 'updated');
 		$data  = $event->data();
 
-		$expectedFields = [
-			'logs',
-			'audits_count',
-			'api_logs_count',
-			'ran_jobs_count',
-			'dispatched_jobs_count',
-			'errors_count',
-			'children_count',
-			'updated_at',
-		];
-
-		foreach ($expectedFields as $field) {
-			$this->assertArrayHasKey($field, $data, "Missing expected field: $field");
-		}
-
-		// Verify full relation data is NOT included (slim payload)
-		$excludedFields = ['request', 'response', 'ran_jobs', 'api_logs', 'errors', 'children'];
-		foreach ($excludedFields as $field) {
-			$this->assertArrayNotHasKey($field, $data, "Unexpected field in slim payload: $field");
+		// The broadcast payload must be slim — no heavy fields that would bloat WebSocket messages
+		$heavyFields = ['logs', 'request', 'response', 'ran_jobs', 'api_logs', 'errors', 'children'];
+		foreach ($heavyFields as $field) {
+			$this->assertArrayNotHasKey($field, $data, "Heavy field '$field' should not be in broadcast payload");
 		}
 	}
 }

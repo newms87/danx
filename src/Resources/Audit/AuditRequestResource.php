@@ -82,6 +82,7 @@ class AuditRequestResource extends ActionResource
             'dispatched_jobs_count' => $auditRequest->dispatchedJobs()->count(),
             'errors_count'          => $auditRequest->errorLogEntries()->count(),
             'children_count'        => $auditRequest->children()->count(),
+            'log_line_count'        => $auditRequest->log_line_count,
             'created_at'            => $auditRequest->created_at,
             'updated_at'            => $auditRequest->updated_at,
 
