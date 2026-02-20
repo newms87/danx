@@ -12,6 +12,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
 use Newms87\Danx\Audit\AuditDriver;
 use Newms87\Danx\Traits\HasDebugLogging;
 use Newms87\Danx\Helpers\DateHelper;
@@ -356,7 +357,8 @@ abstract class Job implements ShouldQueue
         $ref     = $this->ref();
         $prefix  = '######';
         $jobName = "({$this->jobDispatch->id}) --- $ref";
-        static::logDebug("$prefix Handling  $jobName");
+        $traceStatus = Cache::get('debug:trace_enabled') ? 'TRACE' : 'DEBUG';
+        static::logDebug("$prefix Handling  $jobName (log level: $traceStatus)");
 
         $jobBatch = $this->jobDispatch->jobBatch;
 
