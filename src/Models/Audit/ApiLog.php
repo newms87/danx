@@ -108,14 +108,25 @@ class ApiLog extends Model
     {
         static::logError("Failed $apiLog: " . StringHelper::logSafeString($exception->getMessage()));
 
+        // Extract the full response body from the exception when available.
+        // Guzzle's exception message truncates response bodies to 120 chars,
+        // but the full response is available via getResponse().
+        $fullErrorResponse = null;
+        $statusCode        = 0;
+
+        if (method_exists($exception, 'getResponse') && $exception->getResponse()) {
+            $response          = $exception->getResponse();
+            $statusCode        = $response->getStatusCode();
+            $fullErrorResponse = static::parseBody($response);
+        }
+
         $apiLog->update([
-            'status_code' => method_exists($exception, 'getResponse') ? ($exception->getResponse()?->getStatusCode() ?? 0) : 0,
+            'status_code' => $statusCode,
             'finished_at' => now(),
             'run_time_ms' => ($apiLog->started_at ?? now())->diffInMilliseconds(now()),
-            'response'    => [
+            'response'    => $fullErrorResponse ?? [
                 'error_type'    => $errorType,
                 'error_message' => $exception->getMessage(),
-                'has_response'  => method_exists($exception, 'hasResponse') ? $exception->hasResponse() : false,
             ],
             'stack_trace' => debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS),
         ]);
