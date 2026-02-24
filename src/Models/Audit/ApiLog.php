@@ -82,7 +82,7 @@ class ApiLog extends Model
         ApiLog $apiLog,
         ResponseInterface $response
     ): ApiLog {
-        $runTimeMs = ($apiLog->started_at ?? now())->diffInMilliseconds(now());
+        $runTimeMs = ($apiLog->started_at ?? now())->diffInMilliseconds(now(), absolute: true);
 
         static::logDebug("Created $apiLog");
 
@@ -123,7 +123,7 @@ class ApiLog extends Model
         $apiLog->update([
             'status_code' => $statusCode,
             'finished_at' => now(),
-            'run_time_ms' => ($apiLog->started_at ?? now())->diffInMilliseconds(now()),
+            'run_time_ms' => ($apiLog->started_at ?? now())->diffInMilliseconds(now(), absolute: true),
             'response'    => $fullErrorResponse ?? [
                 'error_type'    => $errorType,
                 'error_message' => $exception->getMessage(),
