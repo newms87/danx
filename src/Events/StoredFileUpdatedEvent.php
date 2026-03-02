@@ -42,7 +42,7 @@ class StoredFileUpdatedEvent extends ModelSavedEvent
         return StoredFileResource::make($this->storedFile, [
             '*'              => false,
             'id'             => true,
-            'filename'       => true,
+            'name'           => true,
             'mime'           => true,
             'size'           => true,
             'url'            => true,

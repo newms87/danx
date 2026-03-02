@@ -11,7 +11,7 @@ class StoredFileResource extends ActionResource
     {
         return [
             'id'             => $storedFile->id,
-            'filename'       => $storedFile->filename,
+            'name'           => $storedFile->filename,
             'url'            => $storedFile->url,
             'mime'           => $storedFile->mime,
             'size'           => $storedFile->size,
@@ -23,7 +23,7 @@ class StoredFileResource extends ActionResource
             'updated_at'     => $storedFile->updated_at,
             'thumb'          => fn($fields) => static::getThumb($storedFile),
             'optimized'      => fn($fields) => static::getThumb($storedFile),
-            'transcodes'     => fn($fields) => StoredFileResource::collection($storedFile->transcodes()->get(), $fields),
+            'children'       => fn($fields) => StoredFileResource::collection($storedFile->transcodes()->get(), $fields),
         ];
     }
 
@@ -55,7 +55,7 @@ class StoredFileResource extends ActionResource
         return [
             'id'       => $thumb->id,
             'url'      => $thumb->url,
-            'filename' => $thumb->filename,
+            'name'     => $thumb->filename,
             'mime'     => $thumb->mime,
             'size'     => $thumb->size,
         ];
