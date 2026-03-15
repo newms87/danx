@@ -473,6 +473,8 @@ abstract class Job implements ShouldQueue
         try {
             Job::$runningJob = $this->jobDispatch;
 
+            $this->validateAuthContext();
+
             app()->call($callback);
 
             $this->jobDispatch->update([
@@ -495,5 +497,50 @@ abstract class Job implements ShouldQueue
             // Stop the heartbeat after job completes (success or failure)
             $heartbeat->stop();
         }
+    }
+
+    /**
+     * Validate that user and team context are available before running the job.
+     *
+     * Jobs require authenticated context to ensure team-scoped operations work correctly.
+     * Without this, queries silently return wrong results, models get null team_id,
+     * and duplicate resolution fails — all silent bugs.
+     *
+     * Override requiresAuth() to return false for the rare job that legitimately
+     * runs without user/team context.
+     */
+    protected function validateAuthContext(): void
+    {
+        if (!$this->requiresAuth()) {
+            return;
+        }
+
+        if (!user()) {
+            throw new \RuntimeException(
+                'Job ' . static::class . ' requires an authenticated user but none is set. ' .
+                'Ensure the job was dispatched from an authenticated context. ' .
+                'CLI usage requires authentication before dispatching jobs. ' .
+                'If this job legitimately runs without auth, override requiresAuth() to return false.',
+            );
+        }
+
+        if (!team()) {
+            throw new \RuntimeException(
+                'Job ' . static::class . ' requires a team context but none is set. ' .
+                'Ensure the dispatching user has a team assigned. ' .
+                'If this job legitimately runs without a team, override requiresAuth() to return false.',
+            );
+        }
+    }
+
+    /**
+     * Whether this job requires authenticated user and team context.
+     *
+     * Override to return false for jobs that legitimately run without auth
+     * (e.g., system maintenance, cleanup tasks).
+     */
+    protected function requiresAuth(): bool
+    {
+        return true;
     }
 }
