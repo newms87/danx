@@ -130,6 +130,8 @@ class ProcessFork
      */
     protected static function forkAndRun(array $tasks, int $maxConcurrent, ?int $parentAuditRequestId = null, ?string $auditLabel = null, ?callable $shouldContinue = null): array
     {
+        // Normalize to 0-indexed array — callers may pass string-keyed arrays (e.g., "page_1", "artifact_5")
+        $tasks     = array_values($tasks);
         $taskCount = count($tasks);
         $results   = array_fill(0, $taskCount, ['status' => 'error', 'result' => null, 'error' => 'Not started', 'audit_request_id' => null]);
 
