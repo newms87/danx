@@ -247,4 +247,75 @@ class ProcessForkTest extends TestCase
         $this->assertSame('error', $results[3]['status']);
         $this->assertSame('ok_3', $results[4]['result']);
     }
+
+    /**
+     * Test that shouldContinue callback triggers cancellation of running children.
+     * When the callback returns false, all active children are killed and
+     * un-started tasks get 'Cancelled' error results.
+     */
+    public function test_should_continue_cancels_children(): void
+    {
+        if (!function_exists('pcntl_fork')) {
+            $this->markTestSkipped('pcntl extension not available');
+        }
+
+        $callCount = 0;
+
+        // shouldContinue returns false on the second check — enough time for
+        // children to fork but not complete their sleep
+        $shouldContinue = function () use (&$callCount): bool {
+            $callCount++;
+
+            return $callCount <= 1;
+        };
+
+        $results = ProcessFork::run(
+            [
+                function () {
+                    sleep(10); // Long task — should be killed
+
+                    return 'should_not_finish';
+                },
+                function () {
+                    sleep(10); // Long task — should be killed
+
+                    return 'should_not_finish';
+                },
+            ],
+            shouldContinue: $shouldContinue,
+        );
+
+        $this->assertCount(2, $results);
+
+        // Both tasks should have been cancelled (not succeeded)
+        foreach ($results as $index => $result) {
+            $this->assertNotSame('success', $result['status'],
+                "Task $index should not have succeeded — it should have been cancelled");
+        }
+    }
+
+    /**
+     * Test that shouldContinue=null (default) behaves the same as before —
+     * all tasks complete normally with blocking wait.
+     */
+    public function test_null_should_continue_runs_normally(): void
+    {
+        if (!function_exists('pcntl_fork')) {
+            $this->markTestSkipped('pcntl extension not available');
+        }
+
+        $results = ProcessFork::run(
+            [
+                fn() => 'task_a',
+                fn() => 'task_b',
+            ],
+            shouldContinue: null,
+        );
+
+        $this->assertCount(2, $results);
+        $this->assertSame('success', $results[0]['status']);
+        $this->assertSame('task_a', $results[0]['result']);
+        $this->assertSame('success', $results[1]['status']);
+        $this->assertSame('task_b', $results[1]['result']);
+    }
 }

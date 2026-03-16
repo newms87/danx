@@ -40,12 +40,17 @@ class ProcessFork
      * AuditRequest (parented to the current audit request) for isolated logging.
      * The child's audit_request_id is included in each result entry.
      *
+     * When $shouldContinue is provided, the parent process polls it periodically while waiting
+     * for children. If it returns false, all active children are sent SIGTERM and the method
+     * returns with 'cancelled' error results for any unfinished tasks.
+     *
      * @param  array<callable>  $tasks  Closures to execute in parallel
      * @param  int|null  $maxConcurrent  Max children to run simultaneously (null = all at once)
      * @param  string|null  $auditLabel  Label prefix for child audit requests (e.g., "IdentityExtraction")
+     * @param  callable|null  $shouldContinue  Callback returning bool — false triggers cancellation of all children
      * @return array<array{status: string, result: mixed, error: string|null, audit_request_id: int|null}>
      */
-    public static function run(array $tasks, ?int $maxConcurrent = null, ?string $auditLabel = null): array
+    public static function run(array $tasks, ?int $maxConcurrent = null, ?string $auditLabel = null, ?callable $shouldContinue = null): array
     {
         if (empty($tasks)) {
             return [];
@@ -69,7 +74,7 @@ class ProcessFork
         $maxConcurrent = $maxConcurrent ?? count($tasks);
         $maxConcurrent = max(1, $maxConcurrent);
 
-        return self::forkAndRun($tasks, $maxConcurrent, $parentAuditRequestId, $auditLabel);
+        return self::forkAndRun($tasks, $maxConcurrent, $parentAuditRequestId, $auditLabel, $shouldContinue);
     }
 
     /**
@@ -115,10 +120,15 @@ class ProcessFork
      * When maxConcurrent < total tasks, forks in waves: starts N children, waits for
      * any to finish, then forks the next, until all tasks are dispatched and completed.
      *
+     * When $shouldContinue is provided, uses non-blocking wait (WNOHANG) and polls the
+     * callback every ~1 second. If it returns false, sends SIGTERM to all active children,
+     * waits for them to exit, and returns 'cancelled' results for unfinished tasks.
+     *
      * @param  array<callable>  $tasks
+     * @param  callable|null  $shouldContinue  Polled periodically — return false to cancel all children
      * @return array<array{status: string, result: mixed, error: string|null}>
      */
-    protected static function forkAndRun(array $tasks, int $maxConcurrent, ?int $parentAuditRequestId = null, ?string $auditLabel = null): array
+    protected static function forkAndRun(array $tasks, int $maxConcurrent, ?int $parentAuditRequestId = null, ?string $auditLabel = null, ?callable $shouldContinue = null): array
     {
         $taskCount = count($tasks);
         $results   = array_fill(0, $taskCount, ['status' => 'error', 'result' => null, 'error' => 'Not started', 'audit_request_id' => null]);
@@ -132,13 +142,22 @@ class ProcessFork
         // Track active children: pid => taskIndex
         $activeChildren = [];
         $nextTaskIndex  = 0;
+        $cancelled      = false;
 
         self::logDebug("Forking $taskCount tasks with max concurrency $maxConcurrent");
 
         // Fork tasks in waves
         while ($nextTaskIndex < $taskCount || !empty($activeChildren)) {
-            // Fork new children up to the concurrency limit
-            while ($nextTaskIndex < $taskCount && count($activeChildren) < $maxConcurrent) {
+            // Check cancellation before forking new children
+            if (!$cancelled && $shouldContinue && !$shouldContinue()) {
+                self::logDebug('shouldContinue returned false — cancelling all children');
+                self::killActiveChildren($activeChildren);
+                $cancelled = true;
+                // Don't fork any more tasks — just wait for children to exit below
+            }
+
+            // Fork new children up to the concurrency limit (skip if cancelled)
+            while (!$cancelled && $nextTaskIndex < $taskCount && count($activeChildren) < $maxConcurrent) {
                 $taskIndex = $nextTaskIndex++;
                 $task      = $tasks[$taskIndex];
                 $tempFile  = $tempFiles[$taskIndex];
@@ -155,17 +174,35 @@ class ProcessFork
                 }
             }
 
+            // If cancelled, mark remaining un-forked tasks
+            if ($cancelled && $nextTaskIndex < $taskCount) {
+                while ($nextTaskIndex < $taskCount) {
+                    $results[$nextTaskIndex] = self::errorResult('Cancelled');
+                    @unlink($tempFiles[$nextTaskIndex]);
+                    $nextTaskIndex++;
+                }
+            }
+
             // Wait for any child to finish
             if (!empty($activeChildren)) {
-                $status     = 0;
-                $exitedPid = pcntl_waitpid(-1, $status);
+                if ($shouldContinue) {
+                    // Non-blocking wait — poll shouldContinue between checks
+                    $exitedPid = self::waitForChildNonBlocking($activeChildren, $results, $tempFiles, $shouldContinue, $cancelled);
 
-                if ($exitedPid > 0 && isset($activeChildren[$exitedPid])) {
-                    $taskIndex = $activeChildren[$exitedPid];
-                    unset($activeChildren[$exitedPid]);
+                    if ($exitedPid === -2) {
+                        // Cancellation triggered during wait
+                        $cancelled = true;
+                    }
+                } else {
+                    // Blocking wait — no cancellation callback
+                    $status    = 0;
+                    $exitedPid = pcntl_waitpid(-1, $status);
 
-                    // Read result from temp file
-                    $results[$taskIndex] = self::readChildResult($tempFiles[$taskIndex], $status);
+                    if ($exitedPid > 0 && isset($activeChildren[$exitedPid])) {
+                        $taskIndex = $activeChildren[$exitedPid];
+                        unset($activeChildren[$exitedPid]);
+                        $results[$taskIndex] = self::readChildResult($tempFiles[$taskIndex], $status);
+                    }
                 }
             }
         }
@@ -182,6 +219,81 @@ class ProcessFork
         ]);
 
         return $results;
+    }
+
+    /**
+     * Non-blocking wait loop that polls shouldContinue every ~1 second.
+     * Reaps any exited children and records their results. If shouldContinue returns false,
+     * kills all remaining children and returns -2 to signal cancellation.
+     *
+     * @return int  -2 if cancelled, otherwise the last reaped PID (or 0 if none reaped yet)
+     */
+    protected static function waitForChildNonBlocking(array &$activeChildren, array &$results, array $tempFiles, callable $shouldContinue, bool $alreadyCancelled): int
+    {
+        while (!empty($activeChildren)) {
+            // Try to reap any exited child (non-blocking)
+            $status    = 0;
+            $exitedPid = pcntl_waitpid(-1, $status, WNOHANG);
+
+            if ($exitedPid > 0 && isset($activeChildren[$exitedPid])) {
+                $taskIndex = $activeChildren[$exitedPid];
+                unset($activeChildren[$exitedPid]);
+                $results[$taskIndex] = self::readChildResult($tempFiles[$taskIndex], $status);
+
+                return $exitedPid;
+            }
+
+            // Check cancellation
+            if (!$alreadyCancelled && !$shouldContinue()) {
+                self::logDebug('shouldContinue returned false during wait — cancelling all children');
+                self::killActiveChildren($activeChildren);
+
+                // Wait for all killed children to actually exit
+                self::reapKilledChildren($activeChildren, $results, $tempFiles);
+
+                return -2;
+            }
+
+            // Sleep briefly to avoid busy-waiting
+            usleep(500_000); // 0.5 seconds
+        }
+
+        return 0;
+    }
+
+    /**
+     * Send SIGTERM to all active child processes.
+     */
+    protected static function killActiveChildren(array $activeChildren): void
+    {
+        foreach (array_keys($activeChildren) as $pid) {
+            // Return value intentionally ignored — child may have already exited
+            posix_kill($pid, SIGTERM);
+        }
+    }
+
+    /**
+     * Wait for all killed children to exit, recording their results as 'Cancelled'.
+     */
+    protected static function reapKilledChildren(array &$activeChildren, array &$results, array $tempFiles): void
+    {
+        while (!empty($activeChildren)) {
+            $status    = 0;
+            $exitedPid = pcntl_waitpid(-1, $status);
+
+            if ($exitedPid > 0 && isset($activeChildren[$exitedPid])) {
+                $taskIndex = $activeChildren[$exitedPid];
+                unset($activeChildren[$exitedPid]);
+
+                // Try to read the result — the child may have finished before SIGTERM arrived
+                $result = self::readChildResult($tempFiles[$taskIndex], $status);
+                if ($result['status'] === 'success') {
+                    $results[$taskIndex] = $result;
+                } else {
+                    $results[$taskIndex] = self::errorResult('Cancelled');
+                }
+            }
+        }
     }
 
     /**
@@ -276,7 +388,7 @@ class ProcessFork
     public static function purgeAllRedisConnections(): void
     {
         // Disconnect all active connections to close their sockets
-        foreach (Redis::connections() as $connection) {
+        foreach (Redis::connections() ?? [] as $connection) {
             $connection->disconnect();
         }
 
