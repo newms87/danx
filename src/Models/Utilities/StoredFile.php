@@ -17,6 +17,7 @@ use Newms87\Danx\Helpers\ArrayHelper;
 use Newms87\Danx\Helpers\FileHelper;
 use Newms87\Danx\Jobs\Job;
 use Newms87\Danx\Services\TranscodeFileService;
+use Newms87\Danx\Traits\HasResourceId;
 use Newms87\Danx\Traits\SerializesDates;
 use Newms87\Danx\Traits\UuidModelTrait;
 use OwenIt\Auditing\Auditable;
@@ -26,9 +27,12 @@ class StoredFile extends Model implements AuditableContract
 {
     use Auditable,
         HasFactory,
+        HasResourceId,
         SerializesDates,
         SoftDeletes,
         UuidModelTrait;
+
+    const string RESOURCE_ID_PREFIX = 'SF';
 
     const string
         MIME_3G2        = 'video/3gpp2',

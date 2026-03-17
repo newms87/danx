@@ -10,12 +10,15 @@ use Newms87\Danx\Events\JobDispatchUpdatedEvent;
 use Newms87\Danx\Models\Job\JobDispatch;
 use Newms87\Danx\Models\Team\Team;
 use Newms87\Danx\Traits\HasRelationCountersTrait;
+use Newms87\Danx\Traits\HasResourceId;
 use Newms87\Danx\Traits\HasVirtualFields;
 use Newms87\Danx\Traits\SerializesDates;
 
 class AuditRequest extends Model
 {
-	use HasRelationCountersTrait, HasVirtualFields, SerializesDates;
+	use HasRelationCountersTrait, HasResourceId, HasVirtualFields, SerializesDates;
+
+	const string RESOURCE_ID_PREFIX = 'AR';
 
 	/**
 	 * Re-entrancy guard to prevent infinite broadcast loops.

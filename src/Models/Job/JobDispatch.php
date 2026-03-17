@@ -6,9 +6,14 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Newms87\Danx\Events\JobDispatchUpdatedEvent;
 use Newms87\Danx\Models\Audit\AuditRequest;
+use Newms87\Danx\Traits\HasResourceId;
 
 class JobDispatch extends Model
 {
+    use HasResourceId;
+
+    const string RESOURCE_ID_PREFIX = 'JD';
+
     const string
         STATUS_PENDING   = 'Pending',
         STATUS_RUNNING   = 'Running',
