@@ -97,7 +97,8 @@ abstract class ActionController extends Controller
 			return response(['error' => true, 'message' => 'Item not found'], 404);
 		}
 
-		$fields = app(PagerRequest::class)->getJson('fields');
+		$request = request();
+		$fields  = app(PagerRequest::class)->getJson('fields') ?: $request->input('fields', []);
 
 		return static::$resource::details($model, $fields);
 	}
