@@ -64,6 +64,22 @@ class ApiRequestException extends \Exception
         return $this->response?->getStatusCode() ?? 0;
     }
 
+    /**
+     * Return the first value of the named response header, or null when the
+     * header is absent or no response is attached. Header names are matched
+     * case-insensitively per the PSR-7 contract.
+     */
+    public function getResponseHeader(string $name): ?string
+    {
+        if (!$this->response) {
+            return null;
+        }
+
+        $line = $this->response->getHeaderLine($name);
+
+        return $line === '' ? null : $line;
+    }
+
 	/**
 	 * @return string The implementing API name
 	 */
