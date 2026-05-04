@@ -105,6 +105,39 @@ class LockHelper
 	}
 
 	/**
+	 * Re-set the TTL on an already-held lock without re-blocking.
+	 *
+	 * Force-releases the underlying cache lock and immediately re-acquires it with
+	 * the supplied TTL. There is a brief race window between the release and the
+	 * re-acquire — acceptable at the ~60s heartbeat scale this method is designed
+	 * for. If the key was not previously held, the lock is acquired fresh.
+	 *
+	 * Use to refresh a dispatch-scoped lock from a heartbeat handler so the lock
+	 * stays alive while the holding process is alive.
+	 */
+	public static function extend(Model|string $key, int $ttl = LockHelper::TTL): bool
+	{
+		$key = self::resolveKey($key);
+
+		Cache::lock($key)->forceRelease();
+		$acquired = Cache::lock($key, $ttl)->get();
+
+		if (!$acquired) {
+			// Re-acquire failed — another process won the race during the
+			// release/acquire window. Caller treats this as an unrecoverable
+			// extend so the lock state surfaces instead of silently drifting.
+			static::$acquiredLocks[$key] = false;
+			Log::error("🔴🔒 EXTEND-FAILED: $key");
+			throw new LockException($key, 0);
+		}
+
+		static::$acquiredLocks[$key] = true;
+		Log::debug("🔵🔒 EXTENDED: $key (ttl=$ttl)");
+
+		return true;
+	}
+
+	/**
 	 * @param $key
 	 */
 	public static function release($key)

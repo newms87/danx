@@ -19,4 +19,9 @@ class LockException extends Exception
 
 		parent::__construct("Failed to acquire lock after {$waitTime}s for $this->key", 401, $previous);
 	}
+
+	public function getKey(): string
+	{
+		return $this->key;
+	}
 }
