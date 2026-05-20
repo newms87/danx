@@ -7,6 +7,13 @@ use Newms87\Danx\Services\TranscodeFileService;
 
 class TranscodeDataUrlToStoredFileJob extends Job
 {
+	/**
+	 * 120-second worker timeout. The download inside TranscodeFileService::moveDataUrlToStoredFile
+	 * uses 50s + 1 retry (worst case ~100s) so this floor is wide enough to allow a retry
+	 * to complete inside the worker without SIGTERM.
+	 */
+	public int $timeout = 120;
+
 	private StoredFile $storedFile;
 	private string     $transcodeName;
 	private array      $transcodedFile;

@@ -4,6 +4,9 @@ namespace Newms87\Danx\Services;
 
 use Exception;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\RequestException;
+use Illuminate\Support\Facades\Http;
 use Newms87\Danx\Exceptions\ApiException;
 use Newms87\Danx\Traits\HasDebugLogging;
 use Newms87\Danx\Jobs\TranscodeDataUrlToStoredFileJob;
@@ -82,18 +85,34 @@ class TranscodeFileService
 	}
 
 	/**
-	 * Perform the transcode on the stored file
+	 * Perform the transcode on the stored file.
+	 *
+	 * When the StoredFile already has a partial set of transcodes — i.e. fewer rows than the
+	 * `expected_pages` recorded in `meta.transcodes.{name}.expected_pages` — the missing pages
+	 * are auto-recovered instead of returning the stale partial set. This handles the case
+	 * where the first transcode batch had members that timed out / failed mid-download:
+	 * counter-fix + this gate together mean the file heals itself on the next consumer touch.
 	 */
 	public function transcode(string $transcodeName, StoredFile $storedFile, array $options = []): Collection
 	{
 		static::logDebug("Transcode $transcodeName: $storedFile");
 
-		$transcodes = $storedFile->transcodes()->where('transcode_name', $transcodeName)->get();
+		$existing = $storedFile->transcodes()->where('transcode_name', $transcodeName)->get();
 
-		if ($transcodes->isNotEmpty()) {
-			static::logDebug("Already has $transcodeName transcodes");
+		if ($existing->isNotEmpty()) {
+			$missingPages = $this->getMissingPageNumbers($storedFile, $transcodeName, $existing);
 
-			return $transcodes;
+			if (empty($missingPages)) {
+				static::logDebug("Already has complete $transcodeName transcodes");
+
+				return $existing;
+			}
+
+			static::logDebug("Recovering " . count($missingPages) . " missing $transcodeName page(s) for $storedFile");
+
+			$this->dispatchPartialBatch($storedFile, $transcodeName, $missingPages);
+
+			return $existing;
 		}
 
 		$this->start($storedFile, $transcodeName);
@@ -101,28 +120,146 @@ class TranscodeFileService
 		$transcoder      = $this->getTranscoder($transcodeName);
 		$transcodedFiles = $transcoder->run($storedFile, $options);
 
-		// If this service uses data URLs instead of the raw file data, we can run this in parallel and download the data from the URLs in a job instead of all in a single execution
-		if ($transcoder->usesDataUrls()) {
-			$batchJobs = [];
-			foreach($transcodedFiles as $transcodedFile) {
-				$batchJobs[] = (new TranscodeDataUrlToStoredFileJob($storedFile, $transcodeName, $transcodedFile));
-			}
+		$this->recordExpectedPages($storedFile, $transcodeName, count($transcodedFiles));
 
-			$storedFileId = $storedFile->id;
-			JobBatch::createForJobs("Store transcoded files for $transcodeName", $batchJobs, function () use ($storedFileId, $transcodeName) {
-				app(TranscodeFileService::class)->complete(StoredFile::find($storedFileId), $transcodeName);
-			});
+		// If this service uses data URLs instead of the raw file data, we can run this in
+		// parallel and download the data from the URLs in a job instead of all in a single
+		// execution
+		if ($transcoder->usesDataUrls()) {
+			$this->dispatchDataUrlBatch($storedFile, $transcodeName, $transcodedFiles);
 		} else {
-			// if we are dealing with raw data, the data is already loaded into memory and needs to be saved to a file immediately all in one execution (too expensive and small savings to try to run in jobs in parallel)
+			// Raw-data path: the bytes are already in memory, save inline
 			foreach($transcodedFiles as $transcodedFile) {
 				$transcodedFile = $this->storeTranscodedFile($storedFile, $transcodeName, $transcodedFile['filename'], $transcodedFile['data'], $transcodedFile['page_number'] ?? null);
-				$transcodes->push($transcodedFile);
+				$existing->push($transcodedFile);
 			}
 
 			$this->complete($storedFile, $transcodeName);
 		}
 
-		return $transcodes;
+		return $existing;
+	}
+
+	/**
+	 * Recover missing pages of an already-dispatched data-URL transcode. Called by the
+	 * scheduled sweeper and by consumer code (e.g. FileResolutionService) when partial state
+	 * is detected. Idempotent — running twice on a healthy SF is a no-op.
+	 */
+	public function recoverIncompleteTranscode(StoredFile $storedFile, string $transcodeName): bool
+	{
+		$existing     = $storedFile->transcodes()->where('transcode_name', $transcodeName)->get();
+		$missingPages = $this->getMissingPageNumbers($storedFile, $transcodeName, $existing);
+
+		if (empty($missingPages)) {
+			return false;
+		}
+
+		static::logDebug("Recovering " . count($missingPages) . " missing $transcodeName page(s) for $storedFile");
+		$this->dispatchPartialBatch($storedFile, $transcodeName, $missingPages);
+
+		return true;
+	}
+
+	/**
+	 * Return the page numbers that the transcode is expected to produce but does not yet
+	 * have on disk. Empty array = healthy (or expected_pages unknown — legacy rows).
+	 *
+	 * @param Collection<int,StoredFile>|null $existing optional preloaded transcode rows
+	 * @return int[]
+	 */
+	public function getMissingPageNumbers(StoredFile $storedFile, string $transcodeName, ?Collection $existing = null): array
+	{
+		$expectedPages = $storedFile->meta['transcodes'][$transcodeName]['expected_pages'] ?? null;
+
+		if (!$expectedPages || $expectedPages <= 0) {
+			return [];
+		}
+
+		$rows = $existing
+			?? $storedFile->transcodes()->where('transcode_name', $transcodeName)->get();
+
+		$presentPages = $rows
+			->pluck('page_number')
+			->filter()
+			->map(fn ($n) => (int)$n)
+			->all();
+
+		$missing = [];
+		for ($page = 1; $page <= $expectedPages; $page++) {
+			if (!in_array($page, $presentPages, true)) {
+				$missing[] = $page;
+			}
+		}
+
+		return $missing;
+	}
+
+	/**
+	 * Persist the expected page count on the SF meta so recovery can detect partial state.
+	 */
+	private function recordExpectedPages(StoredFile $storedFile, string $transcodeName, int $expectedPages): void
+	{
+		if ($expectedPages <= 0) {
+			return;
+		}
+
+		$current = $storedFile->meta['transcodes'][$transcodeName] ?? [];
+		$storedFile->setMeta('transcodes', [
+			$transcodeName => array_merge($current, ['expected_pages' => $expectedPages]),
+		])->save();
+	}
+
+	/**
+	 * Re-run the transcoder for a subset of pages and dispatch a recovery batch whose
+	 * on_complete recurses through recoverIncompleteTranscode — so any pages that fail
+	 * during recovery get another pass next tick.
+	 */
+	private function dispatchPartialBatch(StoredFile $storedFile, string $transcodeName, array $pageNumbers): void
+	{
+		$transcoder      = $this->getTranscoder($transcodeName);
+		$transcodedFiles = $transcoder->run($storedFile, ['page_numbers' => $pageNumbers]);
+
+		// Re-open the SF transcode status while recovery runs so consumers waiting via
+		// FileResolutionService::waitForTranscoding know to wait instead of consuming
+		// a partial set.
+		$this->start($storedFile, $transcodeName);
+
+		$this->dispatchDataUrlBatch($storedFile, $transcodeName, $transcodedFiles);
+	}
+
+	/**
+	 * Create a JobBatch of TranscodeDataUrlToStoredFileJob members. on_complete marks the
+	 * SF status Complete and runs one round of recovery — so a single batch-member failure
+	 * does not require a sweep to reach the next attempt.
+	 */
+	private function dispatchDataUrlBatch(StoredFile $storedFile, string $transcodeName, array $transcodedFiles): void
+	{
+		$batchJobs = [];
+		foreach($transcodedFiles as $transcodedFile) {
+			$batchJobs[] = (new TranscodeDataUrlToStoredFileJob($storedFile, $transcodeName, $transcodedFile));
+		}
+
+		$storedFileId = $storedFile->id;
+		JobBatch::createForJobs(
+			"Store transcoded files for $transcodeName",
+			$batchJobs,
+			function () use ($storedFileId, $transcodeName) {
+				$sf = StoredFile::find($storedFileId);
+				if (!$sf) {
+					return;
+				}
+
+				$service = app(TranscodeFileService::class);
+				$service->complete($sf, $transcodeName);
+
+				// Refresh meta then check for stragglers. dispatchPartialBatch will fire a
+				// second batch when rows < expected_pages — the SF is re-flipped to
+				// In Progress and the cycle continues until pages match or operator picks
+				// up the SF via the sweeper.
+				$sf->refresh();
+				$service->recoverIncompleteTranscode($sf, $transcodeName);
+			},
+		);
 	}
 
 	public function moveDataUrlToStoredFile(StoredFile $storedFile, string $transcodeName, array $transcodedFile): StoredFile
@@ -139,7 +276,19 @@ class TranscodeFileService
 			throw new Exception("Transcoded file does not have a filename");
 		}
 
-		$data = file_get_contents($url);
+		// 50-second HTTP timeout + 1 retry (100ms backoff). Worst case ~100s — fits inside the
+		// 120s TranscodeDataUrlToStoredFileJob worker timeout. Replaces a naked file_get_contents
+		// which had no timeout and could be SIGTERM'd by Laravel's default 60s worker timeout
+		// mid-download, stranding the JobBatch counter and starving the on_complete callback.
+		try {
+			$response = Http::timeout(50)
+				->retry(2, 100, throw: false)
+				->get($url)
+				->throw();
+			$data = $response->body();
+		} catch (RequestException|ConnectionException $exception) {
+			throw new Exception("Failed to download transcoded file from $url: " . $exception->getMessage(), 0, $exception);
+		}
 
 		return $this->storeTranscodedFile($storedFile, $transcodeName, $filename, $data, $pageNumber);
 	}

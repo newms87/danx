@@ -18,6 +18,7 @@ use Newms87\Danx\Traits\HasDebugLogging;
 use Newms87\Danx\Helpers\DateHelper;
 use Newms87\Danx\Helpers\FileHelper;
 use Newms87\Danx\Helpers\LockHelper;
+use Newms87\Danx\Models\Job\JobBatch;
 use Newms87\Danx\Models\Job\JobDispatch;
 use Newms87\Danx\Support\Heartbeat;
 use ReflectionClass;
@@ -365,29 +366,7 @@ abstract class Job implements ShouldQueue
         try {
             $this->executeJob();
             if ($jobBatch) {
-                LockHelper::acquire($jobBatch);
-                $jobBatch->refresh();
-                $jobBatch->pending_jobs -= 1;
-                $jobBatch->save();
-                LockHelper::release($jobBatch);
-
-                if ($jobBatch->pending_jobs === 0) {
-                    $jobBatch->finished_at = now()->timestamp;
-                    if ($jobBatch->on_complete) {
-                        try {
-                            $onComplete = unserialize($jobBatch->on_complete);
-
-                            if (is_callable($onComplete)) {
-                                $onComplete($jobBatch);
-                            } else {
-                                static::logError("on_complete callback for JobBatch is not callable $jobBatch->id");
-                            }
-                        } catch (Throwable $exception) {
-                            static::logError("Error executing on_complete callback for JobBatch $jobBatch->id: " . $exception->getMessage());
-                        }
-                    }
-                }
-                $jobBatch->save();
+                $this->settleJobBatch($jobBatch, failed: false);
             }
 
             $time = DateHelper::timerStr(static::class);
@@ -396,8 +375,7 @@ abstract class Job implements ShouldQueue
             $time = DateHelper::timerStr(static::class);
             static::logDebug("$prefix Failed   $jobName --- ($time)");
             if ($jobBatch) {
-                $jobBatch->failed_jobs += 1;
-                $jobBatch->save();
+                $this->settleJobBatch($jobBatch, failed: true);
             }
             throw $exception;
         } finally {
@@ -411,6 +389,16 @@ abstract class Job implements ShouldQueue
 
     /**
      * Handle a job failure (called by Laravel when job fails/times out externally)
+     *
+     * Two failure paths converge here:
+     *   1. In-process exception that handle() already caught — dispatch status was set to
+     *      STATUS_EXCEPTION by executeJob's inner catch, and handle()'s catch arm already
+     *      settled the JobBatch counters. We must NOT double-settle.
+     *   2. External SIGTERM / worker timeout — handle()'s try/catch never ran, dispatch
+     *      status is still STATUS_RUNNING, and the JobBatch counters are NOT settled.
+     *      We must settle here or the batch's on_complete callback never fires.
+     *
+     * Distinguish via `$this->jobDispatch->status`: RUNNING ⇒ path 2, anything else ⇒ path 1.
      */
     public function failed(?Throwable $exception = null): void
     {
@@ -422,6 +410,9 @@ abstract class Job implements ShouldQueue
             'exception'    => $exception ? substr($exception->getMessage(), 0, 500) : null,
         ]);
 
+        $needsBatchSettlement = $this->jobDispatch?->jobBatch
+            && $this->jobDispatch->status === JobDispatch::STATUS_RUNNING;
+
         if ($this->jobDispatch) {
             if ($this->jobDispatch->isTimedOut()) {
                 $this->jobDispatch->timeout();
@@ -430,6 +421,56 @@ abstract class Job implements ShouldQueue
                     'status'       => JobDispatch::STATUS_FAILED,
                     'completed_at' => now(),
                 ]);
+            }
+        }
+
+        if ($needsBatchSettlement) {
+            $this->settleJobBatch($this->jobDispatch->jobBatch, failed: true);
+        }
+    }
+
+    /**
+     * Settle a JobBatch member's terminal state. Always decrements pending_jobs by one;
+     * optionally bumps failed_jobs; fires on_complete when pending_jobs hits zero.
+     *
+     * Centralised so success / in-process exception / external-timeout paths share one
+     * accountant. Bug history: before this method, only the success arm decremented
+     * pending_jobs, so any failed/timed-out batch member left pending_jobs > 0 forever
+     * and the batch's on_complete callback never ran.
+     */
+    private function settleJobBatch(JobBatch $jobBatch, bool $failed): void
+    {
+        $isFinished = false;
+
+        LockHelper::acquire($jobBatch);
+        try {
+            $jobBatch->refresh();
+            $jobBatch->pending_jobs = max(0, $jobBatch->pending_jobs - 1);
+            if ($failed) {
+                $jobBatch->failed_jobs += 1;
+            }
+
+            if ($jobBatch->pending_jobs === 0 && !$jobBatch->finished_at) {
+                $jobBatch->finished_at = now()->timestamp;
+                $isFinished            = true;
+            }
+
+            $jobBatch->save();
+        } finally {
+            LockHelper::release($jobBatch);
+        }
+
+        if ($isFinished && $jobBatch->on_complete) {
+            try {
+                $onComplete = unserialize($jobBatch->on_complete);
+
+                if (is_callable($onComplete)) {
+                    $onComplete($jobBatch);
+                } else {
+                    static::logError("on_complete callback for JobBatch is not callable $jobBatch->id");
+                }
+            } catch (Throwable $exception) {
+                static::logError("Error executing on_complete callback for JobBatch $jobBatch->id: " . $exception->getMessage());
             }
         }
     }

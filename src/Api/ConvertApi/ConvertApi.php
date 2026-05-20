@@ -204,25 +204,36 @@ class ConvertApi extends BearerTokenApi
 	}
 
 	/**
-	 * Convert a PDF to a list of images (1 per page of the PDF)
+	 * Convert a PDF to a list of images (1 per page of the PDF).
+	 *
+	 * @param string      $url       Source PDF URL.
+	 * @param string|null $pageRange Optional ConvertAPI PageRange spec ("3,7,12-15"). When set,
+	 *                               only the named pages are rendered — used by partial-transcode
+	 *                               recovery so we don't re-run the entire PDF for a few missing
+	 *                               pages.
 	 */
-	public function pdfToImage(string $url): ?array
+	public function pdfToImage(string $url, ?string $pageRange = null): ?array
 	{
-		$params = [
-			'Parameters' => [
-				[
-					'Name'      => 'File',
-					'FileValue' => [
-						'Url' => $url,
-					],
+		$parameters = [
+			[
+				'Name'      => 'File',
+				'FileValue' => [
+					'Url' => $url,
 				],
-				[
-					'Name'  => 'StoreFile',
-					'Value' => true,
-				],
+			],
+			[
+				'Name'  => 'StoreFile',
+				'Value' => true,
 			],
 		];
 
-		return $this->post('pdf/to/jpg', $params)->json();
+		if ($pageRange) {
+			$parameters[] = [
+				'Name'  => 'PageRange',
+				'Value' => $pageRange,
+			];
+		}
+
+		return $this->post('pdf/to/jpg', ['Parameters' => $parameters])->json();
 	}
 }
