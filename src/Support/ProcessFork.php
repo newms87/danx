@@ -71,7 +71,11 @@ class ProcessFork
             return self::runSequentially($tasks);
         }
 
-        $maxConcurrent = $maxConcurrent ?? count($tasks);
+        // Default cap protects every caller from saturating the DB connection pool
+        // when fan-out exceeds PostgreSQL's max_connections. Callers that legitimately
+        // need more parallelism pass an explicit maxConcurrent.
+        $configCap     = (int) config('danx.process_fork.max_concurrent', 16);
+        $maxConcurrent = $maxConcurrent ?? min(count($tasks), max(1, $configCap));
         $maxConcurrent = max(1, $maxConcurrent);
 
         return self::forkAndRun($tasks, $maxConcurrent, $parentAuditRequestId, $auditLabel, $shouldContinue);

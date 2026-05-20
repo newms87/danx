@@ -96,6 +96,61 @@ class ProcessForkTest extends TestCase
     }
 
     /**
+     * Test that the danx.process_fork.max_concurrent config defaults the cap
+     * when callers don't pass maxConcurrent. Prevents DB connection exhaustion
+     * from unbounded fan-out (root cause of the PDF-transcode "too many clients
+     * already" production incident).
+     */
+    public function test_default_concurrent_cap_reads_from_config(): void
+    {
+        if (!function_exists('pcntl_fork')) {
+            $this->markTestSkipped('pcntl extension not available');
+        }
+
+        config(['danx.process_fork.max_concurrent' => 3]);
+
+        $logFile = tempnam(sys_get_temp_dir(), 'pfork_cap_');
+        $tasks   = [];
+        for ($i = 0; $i < 12; $i++) {
+            $tasks[] = function () use ($logFile) {
+                // Append start + sleep + end markers so we can count overlap windows.
+                $start = microtime(true);
+                file_put_contents($logFile, "START $start\n", FILE_APPEND | LOCK_EX);
+                usleep(120_000);
+                $end = microtime(true);
+                file_put_contents($logFile, "END $end\n", FILE_APPEND | LOCK_EX);
+
+                return 'ok';
+            };
+        }
+
+        $results = ProcessFork::run($tasks);
+
+        $this->assertCount(12, $results);
+        foreach ($results as $r) {
+            $this->assertSame('success', $r['status']);
+        }
+
+        // Count max concurrent overlap by walking timestamps.
+        $events = [];
+        foreach (file($logFile, FILE_IGNORE_NEW_LINES) as $line) {
+            [$tag, $ts] = explode(' ', $line, 2);
+            $events[]    = [(float) $ts, $tag === 'START' ? 1 : -1];
+        }
+        usort($events, fn ($a, $b) => $a[0] <=> $b[0]);
+
+        $running = 0;
+        $maxObserved = 0;
+        foreach ($events as [$_, $delta]) {
+            $running += $delta;
+            $maxObserved = max($maxObserved, $running);
+        }
+        @unlink($logFile);
+
+        $this->assertLessThanOrEqual(3, $maxObserved, "ProcessFork did not honor config cap; saw $maxObserved concurrent forks");
+    }
+
+    /**
      * Test that concurrency limit is respected — when maxConcurrent is set,
      * only that many children run simultaneously, processing in waves.
      */

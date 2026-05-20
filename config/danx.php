@@ -14,6 +14,20 @@ return [
 		'pdf_to_images' => env('TRANSCODE_PDF_TO_IMAGES', false),
 	],
 
+	'process_fork' => [
+		/**
+		 * Default cap for ProcessFork::run() when callers don't pass an explicit
+		 * maxConcurrent. Each fork inherits a fresh DB connection — unbounded fan-out
+		 * saturates PostgreSQL's `max_connections` (default 100) and individual
+		 * children fail with "too many clients already" mid-task.
+		 *
+		 * 16 = safe under PG's default 100-connection cap (Horizon + Octane + web
+		 * + scheduler + a couple of orchestrator forks share the pool). Override via
+		 * DANX_PROCESS_FORK_MAX_CONCURRENT when the deployment scales PG limits.
+		 */
+		'max_concurrent' => (int) env('DANX_PROCESS_FORK_MAX_CONCURRENT', 16),
+	],
+
 	'audit'               => [
 		'enabled' => env('AUDIT_ENABLED', env('AUDITING_ENABLED', false)),
 
