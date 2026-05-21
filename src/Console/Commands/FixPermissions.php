@@ -19,21 +19,21 @@ class FixPermissions extends Command
 		}
 
 		$commands = [
-			'chmod -R 777 storage',
-			'chmod -R 777 bootstrap/cache',
-			'chmod -R 777 app',
-			'chmod -R 777 config',
-			'chmod -R 777 database',
-			'chmod -R 777 public',
-			'chmod -R 777 routes',
-			'chmod -R 777 resources',
-			'chmod -R 777 vendor',
-			'chmod 777 .',
-			'chmod 777 composer.json',
+			'chmod -Rf 777 storage',
+			'chmod -Rf 777 bootstrap/cache',
+			'chmod -Rf 777 app',
+			'chmod -Rf 777 config',
+			'chmod -Rf 777 database',
+			'chmod -Rf 777 public',
+			'chmod -Rf 777 routes',
+			'chmod -Rf 777 resources',
+			'chmod -Rf 777 vendor',
+			'chmod -f 777 .',
+			'chmod -f 777 composer.json',
 		];
 
 		foreach($commands as $command) {
-			(new Process(explode(' ', $command), base_path('')))->mustRun();
+			(new Process(explode(' ', $command), base_path('')))->run();
 			$this->info("Executed: $command");
 		}
 
