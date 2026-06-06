@@ -327,6 +327,43 @@ class StringHelper
 	}
 
 	/**
+	 * Header names whose values must never be persisted or logged in clear text
+	 * (API keys, bearer tokens, session cookies). Matched case-insensitively.
+	 */
+	public const SENSITIVE_HEADERS = [
+		'authorization',
+		'proxy-authorization',
+		'api-key',
+		'x-api-key',
+		'openai-api-key',
+		'x-api-token',
+		'x-auth-token',
+		'cookie',
+		'set-cookie',
+	];
+
+	/**
+	 * Redact sensitive header values so credentials are never written to ApiLog
+	 * rows or error-log request dumps. Preserves header keys + structure; replaces
+	 * only the values of SENSITIVE_HEADERS with a fixed marker.
+	 *
+	 * @param  array  $headers  Guzzle-style header map (value: string or array of strings)
+	 * @return array
+	 */
+	public static function redactHeaders(array $headers): array
+	{
+		foreach ($headers as $key => $values) {
+			if (in_array(strtolower((string)$key), static::SENSITIVE_HEADERS, true)) {
+				$headers[$key] = is_array($values)
+					? array_map(fn() => '***redacted***', $values)
+					: '***redacted***';
+			}
+		}
+
+		return $headers;
+	}
+
+	/**
 	 * @param string $string
 	 * @return string
 	 */

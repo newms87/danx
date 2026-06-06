@@ -467,7 +467,8 @@ LUA;
      */
     public static function displayHeaders($headers)
     {
-        $str = '';
+        $str     = '';
+        $headers = StringHelper::redactHeaders($headers);
 
         foreach ($headers as $key => $values) {
             $str .= "$key: " . implode(',', $values) . "\n";

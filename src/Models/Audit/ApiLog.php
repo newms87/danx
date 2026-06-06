@@ -65,7 +65,7 @@ class ApiLog extends Model
             'status_code'      => null,
             'method'           => $request->getMethod(),
             'request'          => static::parseBody($request),
-            'request_headers'  => $request->getHeaders(),
+            'request_headers'  => StringHelper::redactHeaders($request->getHeaders()),
             'started_at'       => now(),
             'will_timeout_at'  => $timeoutSeconds ? now()->addSeconds($timeoutSeconds) : null,
         ]);
@@ -89,7 +89,7 @@ class ApiLog extends Model
         $apiLog->update([
             'status_code'      => $response->getStatusCode(),
             'response'         => static::parseBody($response),
-            'response_headers' => $response->getHeaders(),
+            'response_headers' => StringHelper::redactHeaders($response->getHeaders()),
             'stack_trace'      => $response->getStatusCode() >= 400 ? debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS) : null,
             'finished_at'      => now(),
             'run_time_ms'      => $runTimeMs,
