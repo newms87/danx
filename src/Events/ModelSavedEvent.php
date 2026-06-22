@@ -263,6 +263,26 @@ abstract class ModelSavedEvent implements ShouldBroadcast
     }
 
     /**
+     * Gate queued broadcasting on subscriber presence.
+     *
+     * Laravel calls this synchronously in the producing process BEFORE the broadcast
+     * job is enqueued (Illuminate\Events\Dispatcher::shouldBroadcast()). Returning false
+     * skips the enqueue entirely. Without this hook every model mutation enqueues a
+     * broadcast job that runs only to discover zero subscribed channels and send nothing
+     * — under load (e.g. high-frequency AuditRequest log/heartbeat/counter writes) that is
+     * thousands of wasted queue jobs.
+     *
+     * Channel resolution is single-sourced through broadcastOn() so the subscriber set is
+     * computed exactly one way. For the common no-subscriber path this is a cache-only
+     * lookup; the job (and its second broadcastOn() call) only runs when a client is
+     * actually listening.
+     */
+    public function broadcastWhen(): bool
+    {
+        return !empty($this->broadcastOn());
+    }
+
+    /**
      * Determine which channels to broadcast on.
      *
      * Uses subscription system to find subscribed users. Does a quick stale check
