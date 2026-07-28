@@ -10,16 +10,16 @@ use GuzzleHttp\Exception\RequestException;
 use GuzzleHttp\HandlerStack;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Redis;
-use Newms87\Danx\Traits\HasDebugLogging;
 use Newms87\Danx\Exceptions\ApiException;
 use Newms87\Danx\Exceptions\ApiRequestException;
 use Newms87\Danx\Exceptions\RateLimitExceededException;
-use Newms87\Danx\Services\Error\RetryableErrorChecker;
 use Newms87\Danx\Helpers\ConsoleHelper;
 use Newms87\Danx\Helpers\DateHelper;
 use Newms87\Danx\Helpers\FileHelper;
 use Newms87\Danx\Helpers\StringHelper;
 use Newms87\Danx\Models\Audit\ApiLog;
+use Newms87\Danx\Services\Error\RetryableErrorChecker;
+use Newms87\Danx\Traits\HasDebugLogging;
 use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
 
@@ -29,6 +29,7 @@ use Psr\Http\Message\ResponseInterface;
 abstract class Api
 {
     use HasDebugLogging;
+
     // Limits the request rates to the API. Define as many rate limits as needed to satisfy requirements of endpoint
     // Leave empty for no rate limiting.
     // Set waitPerAttempt as false to throw an exception immediately if rate limit is exceeded
@@ -216,7 +217,7 @@ end
 return current
 LUA;
 
-                    $maxWaitSeconds = (int) config('danx.errors.rate_limit_max_wait_seconds', 45);
+                    $maxWaitSeconds = (int)config('danx.errors.rate_limit_max_wait_seconds', 45);
                     $waitedSeconds  = 0;
                     $loggedWaiting  = false;
 
@@ -239,7 +240,7 @@ LUA;
                         // (up to a full $interval seconds) — a caller running inside a job with a
                         // fixed timeout budget must never block here unbounded and unlogged.
                         if ($waitedSeconds >= $maxWaitSeconds) {
-                            $retryAfterSeconds = max(1, (int) Redis::ttl($key));
+                            $retryAfterSeconds = max(1, (int)Redis::ttl($key));
                             static::logWarning("Rate limit wait exceeded {$maxWaitSeconds}s for $serviceName: $limit requests per $interval second(s), retry after {$retryAfterSeconds}s");
 
                             throw new RateLimitExceededException(
@@ -557,7 +558,7 @@ LUA;
             return $this->retryCount;
         }
 
-        return (int) config('danx.errors.api_retry_count', 0);
+        return (int)config('danx.errors.api_retry_count', 0);
     }
 
     /**
@@ -565,7 +566,7 @@ LUA;
      */
     protected function getRetryDelayMs(): int
     {
-        return (int) config('danx.errors.api_retry_delay_ms', 1000);
+        return (int)config('danx.errors.api_retry_delay_ms', 1000);
     }
 
     public function mergeQueryParamsFromUrl(string $url, array $queryParams = []): array
@@ -618,8 +619,8 @@ LUA;
         $this->queryParams = [];
 
         // Capture and reset per-request timeout, tracking the source for debugging
-        $timeoutSource = $this->nextRequestTimeout !== null ? 'setNextTimeout()' : 'requestTimeout';
-        $timeout       = $this->nextRequestTimeout ?? $this->requestTimeout;
+        $timeoutSource            = $this->nextRequestTimeout !== null ? 'setNextTimeout()' : 'requestTimeout';
+        $timeout                  = $this->nextRequestTimeout ?? $this->requestTimeout;
         $this->nextRequestTimeout = null;
 
         // Capture and reset per-request retry count
@@ -669,9 +670,9 @@ LUA;
 
                 // Log successful completion with timing and size
                 $elapsedMs = (int)round((microtime(true) - $startTime) * 1000);
-                $size = $this->response->getBody()->getSize() ?? strlen($this->response->getBody()->getContents());
+                $size      = $this->response->getBody()->getSize() ?? strlen($this->response->getBody()->getContents());
                 $this->response->getBody()->rewind();
-                static::logDebug("Response (" . FileHelper::getHumanSize($size) . " in " . DateHelper::formatDuration($elapsedMs) . "): {$type} " . $this->response->getStatusCode() . " {$url}");
+                static::logDebug('Response (' . FileHelper::getHumanSize($size) . ' in ' . DateHelper::formatDuration($elapsedMs) . "): {$type} " . $this->response->getStatusCode() . " {$url}");
 
                 return $this;
             } catch (RequestException|ConnectException $exception) {

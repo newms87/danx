@@ -18,22 +18,21 @@ use Newms87\Danx\Services\TranscodeFileService;
  */
 class RecoverTranscodePagesJob extends Job
 {
-	public function __construct(
-		protected StoredFile $storedFile,
-		protected string $transcodeName,
-		protected array $pageNumbers
-	)
-	{
-		parent::__construct();
-	}
+    public function __construct(
+        protected StoredFile $storedFile,
+        protected string $transcodeName,
+        protected array $pageNumbers
+    ) {
+        parent::__construct();
+    }
 
-	public function ref(): string
-	{
-		return 'recover-transcode-pages:' . $this->transcodeName . ':' . $this->storedFile->id;
-	}
+    public function ref(): string
+    {
+        return 'recover-transcode-pages:' . $this->transcodeName . ':' . $this->storedFile->id;
+    }
 
-	public function run()
-	{
-		app(TranscodeFileService::class)->recoverPages($this->storedFile, $this->transcodeName, $this->pageNumbers);
-	}
+    public function run()
+    {
+        app(TranscodeFileService::class)->recoverPages($this->storedFile, $this->transcodeName, $this->pageNumbers);
+    }
 }

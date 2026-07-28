@@ -10,12 +10,11 @@ namespace Newms87\Danx\Exceptions;
  */
 class RateLimitExceededException extends ApiException
 {
-	public function __construct(
-		string $message,
-		public readonly int $retryAfterSeconds,
-		$previous = null
-	)
-	{
-		parent::__construct($message, 1001, $previous);
-	}
+    public function __construct(
+        string $message,
+        public readonly int $retryAfterSeconds,
+        $previous = null
+    ) {
+        parent::__construct($message, 1001, $previous);
+    }
 }
