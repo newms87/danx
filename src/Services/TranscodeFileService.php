@@ -9,6 +9,8 @@ use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Http;
 use Newms87\Danx\Exceptions\ApiException;
 use Newms87\Danx\Traits\HasDebugLogging;
+use Newms87\Danx\Helpers\LockHelper;
+use Newms87\Danx\Jobs\RecoverTranscodePagesJob;
 use Newms87\Danx\Jobs\TranscodeDataUrlToStoredFileJob;
 use Newms87\Danx\Jobs\TranscodeStoredFileJob;
 use Newms87\Danx\Models\Job\JobBatch;
@@ -36,6 +38,12 @@ class TranscodeFileService
 		self::TRANSCODE_PDF_TO_IMAGES            => PdfToImagesTranscoder::class,
 		self::TRANSCODE_IMAGE_TO_VERTICAL_CHUNKS => ImageToVerticalChunksTranscoder::class,
 	];
+
+	// TTL for the recovery-in-flight lock (recoverIncompleteTranscode's idempotency guard).
+	// Comfortably longer than any single recovery round (render + store) should take, so a
+	// legitimate NEW recovery request isn't skipped once the in-flight one has actually
+	// finished. Auto-expires — no explicit release needed.
+	const int RECOVERY_LOCK_TTL_SECONDS = 300;
 
 	public function storeTranscodedFile(StoredFile $storedFile, $transcodeName, $filename, $data, int $pageNumber = null): StoredFile
 	{
@@ -155,9 +163,8 @@ class TranscodeFileService
 		}
 
 		static::logDebug("Recovering " . count($missingPages) . " missing $transcodeName page(s) for $storedFile");
-		$this->dispatchPartialBatch($storedFile, $transcodeName, $missingPages);
 
-		return true;
+		return $this->dispatchPartialBatch($storedFile, $transcodeName, $missingPages);
 	}
 
 	/**
@@ -210,19 +217,56 @@ class TranscodeFileService
 	}
 
 	/**
-	 * Re-run the transcoder for a subset of pages and dispatch a recovery batch whose
-	 * on_complete recurses through recoverIncompleteTranscode — so any pages that fail
-	 * during recovery get another pass next tick.
+	 * Flip the SF back to "In Progress" synchronously, then dispatch the actual page
+	 * render (RecoverTranscodePagesJob) asynchronously. Returns false (no-op) when a
+	 * recovery for this SF+transcode is already in flight.
+	 *
+	 * SG-729: the render call (e.g. ConvertAPI's HTTP request) used to run inline here,
+	 * in whatever job called this — TaskOrchestratorJob among them (via
+	 * recoverIncompleteTranscode()) and the first-time transcode path (via transcode()).
+	 * For a large document, or when the caller's rate-limit budget is exhausted, that
+	 * HTTP call can block far longer than the caller's own job timeout, silently
+	 * consuming its entire execution budget. The render call now runs in its own
+	 * isolated, retryable job instead.
+	 *
+	 * The status flip MUST stay synchronous here: FileResolutionService::resolveStoredFile()
+	 * checks is_transcoding immediately after this method returns and only enters
+	 * waitForTranscoding() if it's true. Moving the flip into the async job would race —
+	 * the caller could observe is_transcoding=false and consume a still-partial page set
+	 * before the job ever runs.
+	 *
+	 * Idempotency guard: both callers (transcode() and recoverIncompleteTranscode(), plus
+	 * the on_complete straggler recursion in dispatchDataUrlBatch()) can independently
+	 * detect the same partial state. A held lock means a recovery is already in flight —
+	 * skip firing a redundant duplicate external render call; the in-flight recovery (or
+	 * the next sweeper pass) will pick up any pages still missing once it finishes.
 	 */
-	private function dispatchPartialBatch(StoredFile $storedFile, string $transcodeName, array $pageNumbers): void
+	private function dispatchPartialBatch(StoredFile $storedFile, string $transcodeName, array $pageNumbers): bool
+	{
+		$lockKey = "recover-transcode:$transcodeName:{$storedFile->id}";
+		if (!LockHelper::get($lockKey, self::RECOVERY_LOCK_TTL_SECONDS)) {
+			static::logDebug("Recovery already in flight for $transcodeName page(s) of $storedFile, skipping duplicate dispatch");
+
+			return false;
+		}
+
+		$this->start($storedFile, $transcodeName);
+
+		(new RecoverTranscodePagesJob($storedFile, $transcodeName, $pageNumbers))->dispatch();
+
+		return true;
+	}
+
+	/**
+	 * Render a specific set of missing pages and store them. Runs inside
+	 * RecoverTranscodePagesJob — kept as a public service method (not inlined in the
+	 * job) so it mirrors transcode()'s existing service-owns-the-logic shape and can be
+	 * exercised directly in tests without touching the queue.
+	 */
+	public function recoverPages(StoredFile $storedFile, string $transcodeName, array $pageNumbers): void
 	{
 		$transcoder      = $this->getTranscoder($transcodeName);
 		$transcodedFiles = $transcoder->run($storedFile, ['page_numbers' => $pageNumbers]);
-
-		// Re-open the SF transcode status while recovery runs so consumers waiting via
-		// FileResolutionService::waitForTranscoding know to wait instead of consuming
-		// a partial set.
-		$this->start($storedFile, $transcodeName);
 
 		$this->dispatchDataUrlBatch($storedFile, $transcodeName, $transcodedFiles);
 	}

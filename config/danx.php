@@ -94,5 +94,10 @@ return [
 
 		// Delay between retry attempts in milliseconds
 		'api_retry_delay_ms' => (int) env('API_RETRY_DELAY_MS', 1000),
+
+		// Max seconds Api::throttle() will wait for a rate-limited service's budget to
+		// free up before throwing RateLimitExceededException. Fails fast instead of
+		// silently busy-waiting for the limiter key's full TTL (up to a full interval).
+		'rate_limit_max_wait_seconds' => (int) env('RATE_LIMIT_MAX_WAIT_SECONDS', 45),
 	],
 ];

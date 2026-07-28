@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\Redis;
 use Newms87\Danx\Traits\HasDebugLogging;
 use Newms87\Danx\Exceptions\ApiException;
 use Newms87\Danx\Exceptions\ApiRequestException;
+use Newms87\Danx\Exceptions\RateLimitExceededException;
 use Newms87\Danx\Services\Error\RetryableErrorChecker;
 use Newms87\Danx\Helpers\ConsoleHelper;
 use Newms87\Danx\Helpers\DateHelper;
@@ -215,6 +216,10 @@ end
 return current
 LUA;
 
+                    $maxWaitSeconds = (int) config('danx.errors.rate_limit_max_wait_seconds', 45);
+                    $waitedSeconds  = 0;
+                    $loggedWaiting  = false;
+
                     while (true) {
                         // Use the eval method with an array of arguments and specify the number of keys.
                         // Here, $key is our single key (hence 1) and $interval is passed as an argument for the expiry.
@@ -230,8 +235,27 @@ LUA;
                             throw new ApiException("Rate limit exceeded for $serviceName: $limit requests per $interval second(s)");
                         }
 
+                        // Fail fast instead of silently busy-waiting for the limiter key's full TTL
+                        // (up to a full $interval seconds) — a caller running inside a job with a
+                        // fixed timeout budget must never block here unbounded and unlogged.
+                        if ($waitedSeconds >= $maxWaitSeconds) {
+                            $retryAfterSeconds = max(1, (int) Redis::ttl($key));
+                            static::logWarning("Rate limit wait exceeded {$maxWaitSeconds}s for $serviceName: $limit requests per $interval second(s), retry after {$retryAfterSeconds}s");
+
+                            throw new RateLimitExceededException(
+                                "Rate limit wait exceeded {$maxWaitSeconds}s for $serviceName: $limit requests per $interval second(s)",
+                                $retryAfterSeconds
+                            );
+                        }
+
+                        if (!$loggedWaiting) {
+                            static::logDebug("Rate limit hit for $serviceName ($current/$limit per {$interval}s), waiting up to {$maxWaitSeconds}s for budget");
+                            $loggedWaiting = true;
+                        }
+
                         // Wait for the configured time (converted to microseconds) before trying again.
                         usleep($waitPerAttempt * 1000 * 1000);
+                        $waitedSeconds += $waitPerAttempt;
                     }
                 }
             }
