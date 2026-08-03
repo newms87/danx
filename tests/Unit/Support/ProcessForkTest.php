@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Support;
 
+use Newms87\Danx\Exceptions\RateLimitExceededException;
 use Newms87\Danx\Support\ProcessFork;
 use Orchestra\Testbench\TestCase;
 
@@ -134,12 +135,12 @@ class ProcessForkTest extends TestCase
         // Count max concurrent overlap by walking timestamps.
         $events = [];
         foreach (file($logFile, FILE_IGNORE_NEW_LINES) as $line) {
-            [$tag, $ts] = explode(' ', $line, 2);
-            $events[]    = [(float) $ts, $tag === 'START' ? 1 : -1];
+            [$tag, $ts]  = explode(' ', $line, 2);
+            $events[]    = [(float)$ts, $tag === 'START' ? 1 : -1];
         }
-        usort($events, fn ($a, $b) => $a[0] <=> $b[0]);
+        usort($events, fn($a, $b) => $a[0] <=> $b[0]);
 
-        $running = 0;
+        $running     = 0;
         $maxObserved = 0;
         foreach ($events as [$_, $delta]) {
             $running += $delta;
@@ -372,5 +373,104 @@ class ProcessForkTest extends TestCase
         $this->assertSame('task_a', $results[0]['result']);
         $this->assertSame('success', $results[1]['status']);
         $this->assertSame('task_b', $results[1]['result']);
+    }
+
+    /**
+     * Test that success envelopes carry the error metadata keys as null so the
+     * envelope shape is uniform between success and error results.
+     */
+    public function test_success_envelope_contains_null_error_metadata(): void
+    {
+        $results = ProcessFork::run([
+            fn() => 'ok',
+        ]);
+
+        $this->assertSame('success', $results[0]['status']);
+        $this->assertArrayHasKey('error_class', $results[0]);
+        $this->assertArrayHasKey('error_code', $results[0]);
+        $this->assertArrayHasKey('retry_after', $results[0]);
+        $this->assertNull($results[0]['error_class']);
+        $this->assertNull($results[0]['error_code']);
+        $this->assertNull($results[0]['retry_after']);
+    }
+
+    /**
+     * Test that a RateLimitExceededException thrown by a task yields a typed error
+     * envelope: error_class, error_code, and retry_after — so callers can classify
+     * the failure without string-matching the message. Single task = sequential path.
+     */
+    public function test_rate_limit_exception_yields_typed_error_metadata(): void
+    {
+        $results = ProcessFork::run([
+            fn() => throw new RateLimitExceededException('x', 90),
+        ]);
+
+        $this->assertSame('error', $results[0]['status']);
+        $this->assertSame(RateLimitExceededException::class, $results[0]['error_class']);
+        $this->assertSame(90, $results[0]['retry_after']);
+        $this->assertSame(1001, $results[0]['error_code']);
+        $this->assertStringContainsString('x', $results[0]['error']);
+    }
+
+    /**
+     * Test that a plain exception yields null retry_after, its own class name,
+     * and its (int) code (0 for a bare RuntimeException).
+     */
+    public function test_plain_exception_yields_null_rate_limit_metadata(): void
+    {
+        $results = ProcessFork::run([
+            fn() => throw new \RuntimeException('boom'),
+        ]);
+
+        $this->assertSame('error', $results[0]['status']);
+        $this->assertSame(\RuntimeException::class, $results[0]['error_class']);
+        $this->assertNull($results[0]['retry_after']);
+        $this->assertSame(0, $results[0]['error_code']);
+    }
+
+    /**
+     * Test that the getPrevious() chain is walked: a wrapper exception around a
+     * RateLimitExceededException keeps the wrapper's class but surfaces the typed
+     * exception's retry_after and code.
+     */
+    public function test_wrapped_rate_limit_exception_found_in_previous_chain(): void
+    {
+        $results = ProcessFork::run([
+            function () {
+                $inner = new RateLimitExceededException('blocked', 45);
+
+                throw new \RuntimeException('wrapper failure', 0, $inner);
+            },
+        ]);
+
+        $this->assertSame('error', $results[0]['status']);
+        $this->assertSame(\RuntimeException::class, $results[0]['error_class']);
+        $this->assertSame(45, $results[0]['retry_after']);
+        $this->assertSame(1001, $results[0]['error_code']);
+        $this->assertStringContainsString('wrapper failure', $results[0]['error']);
+    }
+
+    /**
+     * Test that the typed error metadata survives the forked path — serialized to
+     * the child's temp file and read back by the parent.
+     */
+    public function test_forked_error_envelope_carries_metadata(): void
+    {
+        if (!function_exists('pcntl_fork')) {
+            $this->markTestSkipped('pcntl extension not available');
+        }
+
+        $results = ProcessFork::run([
+            fn() => 'ok',
+            fn() => throw new RateLimitExceededException('remote block', 90),
+        ]);
+
+        $this->assertSame('success', $results[0]['status']);
+        $this->assertNull($results[0]['retry_after']);
+
+        $this->assertSame('error', $results[1]['status']);
+        $this->assertSame(RateLimitExceededException::class, $results[1]['error_class']);
+        $this->assertSame(90, $results[1]['retry_after']);
+        $this->assertSame(1001, $results[1]['error_code']);
     }
 }

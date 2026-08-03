@@ -6,6 +6,8 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Redis;
 use Newms87\Danx\Audit\AuditDriver;
+use Newms87\Danx\Exceptions\ApiRequestException;
+use Newms87\Danx\Exceptions\RateLimitExceededException;
 use Newms87\Danx\Traits\HasDebugLogging;
 
 /**
@@ -48,7 +50,7 @@ class ProcessFork
      * @param  int|null  $maxConcurrent  Max children to run simultaneously (null = all at once)
      * @param  string|null  $auditLabel  Label prefix for child audit requests (e.g., "IdentityExtraction")
      * @param  callable|null  $shouldContinue  Callback returning bool — false triggers cancellation of all children
-     * @return array<array{status: string, result: mixed, error: string|null, audit_request_id: int|null}>
+     * @return array<array{status: string, result: mixed, error: string|null, error_class: string|null, error_code: int|null, retry_after: int|null, audit_request_id: int|null}>
      */
     public static function run(array $tasks, ?int $maxConcurrent = null, ?string $auditLabel = null, ?callable $shouldContinue = null): array
     {
@@ -74,7 +76,7 @@ class ProcessFork
         // Default cap protects every caller from saturating the DB connection pool
         // when fan-out exceeds PostgreSQL's max_connections. Callers that legitimately
         // need more parallelism pass an explicit maxConcurrent.
-        $configCap     = (int) config('danx.process_fork.max_concurrent', 16);
+        $configCap     = (int)config('danx.process_fork.max_concurrent', 16);
         $maxConcurrent = $maxConcurrent ?? min(count($tasks), max(1, $configCap));
         $maxConcurrent = max(1, $maxConcurrent);
 
@@ -85,7 +87,7 @@ class ProcessFork
      * Run all tasks sequentially (fallback when pcntl unavailable or single task).
      *
      * @param  array<callable>  $tasks
-     * @return array<array{status: string, result: mixed, error: string|null}>
+     * @return array<array{status: string, result: mixed, error: string|null, error_class: string|null, error_code: int|null, retry_after: int|null, audit_request_id: int|null}>
      */
     protected static function runSequentially(array $tasks): array
     {
@@ -95,7 +97,7 @@ class ProcessFork
             try {
                 $results[$index] = self::successResult($task());
             } catch (\Throwable $e) {
-                $results[$index] = self::errorResult($e->getMessage());
+                $results[$index] = self::errorResultFromThrowable($e);
             }
         }
 
@@ -103,19 +105,68 @@ class ProcessFork
     }
 
     /**
-     * Build a success result entry.
+     * Build a success result entry. Error metadata keys are always present (null)
+     * so success and error envelopes share a uniform shape.
      */
     protected static function successResult(mixed $result, ?int $auditRequestId = null): array
     {
-        return ['status' => 'success', 'result' => $result, 'error' => null, 'audit_request_id' => $auditRequestId];
+        return [
+            'status'           => 'success',
+            'result'           => $result,
+            'error'            => null,
+            'error_class'      => null,
+            'error_code'       => null,
+            'retry_after'      => null,
+            'audit_request_id' => $auditRequestId,
+        ];
     }
 
     /**
      * Build an error result entry.
+     *
+     * Synthetic errors (Cancelled, Fork failed, abnormal child exits) carry only a
+     * message; task exceptions caught in-process should be built via
+     * errorResultFromThrowable() so callers can classify the failure.
      */
-    protected static function errorResult(string $error, ?int $auditRequestId = null): array
+    protected static function errorResult(string $error, ?int $auditRequestId = null, ?string $errorClass = null, ?int $errorCode = null, ?int $retryAfter = null): array
     {
-        return ['status' => 'error', 'result' => null, 'error' => $error, 'audit_request_id' => $auditRequestId];
+        return [
+            'status'           => 'error',
+            'result'           => null,
+            'error'            => $error,
+            'error_class'      => $errorClass,
+            'error_code'       => $errorCode,
+            'retry_after'      => $retryAfter,
+            'audit_request_id' => $auditRequestId,
+        ];
+    }
+
+    /**
+     * Build a typed error result entry from a caught task exception.
+     *
+     * error_class is always the top-level exception class. For error_code and
+     * retry_after, the exception chain (getPrevious) is walked and the FIRST
+     * RateLimitExceededException or ApiRequestException found supplies the values —
+     * a task wrapper exception must not hide the typed API failure underneath it:
+     * - RateLimitExceededException → retry_after = retryAfterSeconds, error_code = getCode()
+     * - ApiRequestException → error_code = HTTP status code
+     * - no typed match → error_code = top-level (int)getCode(), retry_after = null
+     */
+    protected static function errorResultFromThrowable(\Throwable $e, ?int $auditRequestId = null): array
+    {
+        $match = null;
+
+        for ($current = $e; $current !== null; $current = $current->getPrevious()) {
+            if ($current instanceof RateLimitExceededException || $current instanceof ApiRequestException) {
+                $match = $current;
+                break;
+            }
+        }
+
+        $retryAfter = $match instanceof RateLimitExceededException ? $match->retryAfterSeconds : null;
+        $errorCode  = $match instanceof ApiRequestException ? $match->getStatusCode() : (int)($match ?? $e)->getCode();
+
+        return self::errorResult($e->getMessage(), $auditRequestId, get_class($e), $errorCode, $retryAfter);
     }
 
     /**
@@ -130,14 +181,14 @@ class ProcessFork
      *
      * @param  array<callable>  $tasks
      * @param  callable|null  $shouldContinue  Polled periodically — return false to cancel all children
-     * @return array<array{status: string, result: mixed, error: string|null}>
+     * @return array<array{status: string, result: mixed, error: string|null, error_class: string|null, error_code: int|null, retry_after: int|null, audit_request_id: int|null}>
      */
     protected static function forkAndRun(array $tasks, int $maxConcurrent, ?int $parentAuditRequestId = null, ?string $auditLabel = null, ?callable $shouldContinue = null): array
     {
         // Normalize to 0-indexed array — callers may pass string-keyed arrays (e.g., "page_1", "artifact_5")
         $tasks     = array_values($tasks);
         $taskCount = count($tasks);
-        $results   = array_fill(0, $taskCount, ['status' => 'error', 'result' => null, 'error' => 'Not started', 'audit_request_id' => null]);
+        $results   = array_fill(0, $taskCount, self::errorResult('Not started'));
 
         // Create temp files for each child to write results
         $tempFiles = [];
@@ -232,7 +283,7 @@ class ProcessFork
      * Reaps any exited children and records their results. If shouldContinue returns false,
      * kills all remaining children and returns -2 to signal cancellation.
      *
-     * @return int  -2 if cancelled, otherwise the last reaped PID (or 0 if none reaped yet)
+     * @return int -2 if cancelled, otherwise the last reaped PID (or 0 if none reaped yet)
      */
     protected static function waitForChildNonBlocking(array &$activeChildren, array &$results, array $tempFiles, callable $shouldContinue, bool $alreadyCancelled): int
     {
@@ -308,7 +359,7 @@ class ProcessFork
      * Follows Heartbeat pattern: DB::disconnect() → pcntl_fork() → DB::reconnect()
      * in both parent (on success) and child (before executing task).
      *
-     * @return int|null  Child PID on success, null on fork failure
+     * @return int|null Child PID on success, null on fork failure
      */
     protected static function forkChild(callable $task, string $tempFile, ?int $parentAuditRequestId = null, ?string $auditLabel = null): ?int
     {
@@ -371,7 +422,7 @@ class ProcessFork
         try {
             $data = self::successResult($task(), $childAuditRequestId);
         } catch (\Throwable $e) {
-            $data = self::errorResult($e->getMessage(), $childAuditRequestId);
+            $data = self::errorResultFromThrowable($e, $childAuditRequestId);
         }
 
         // Finalize the child audit request (record execution time)
@@ -410,7 +461,7 @@ class ProcessFork
      *
      * @param  string  $tempFile  Path to the child's result file
      * @param  int  $status  The pcntl_waitpid status value
-     * @return array{status: string, result: mixed, error: string|null}
+     * @return array{status: string, result: mixed, error: string|null, error_class: string|null, error_code: int|null, retry_after: int|null, audit_request_id: int|null}
      */
     protected static function readChildResult(string $tempFile, int $status): array
     {

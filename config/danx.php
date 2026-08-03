@@ -99,5 +99,17 @@ return [
         // free up before throwing RateLimitExceededException. Fails fast instead of
         // silently busy-waiting for the limiter key's full TTL (up to a full interval).
         'rate_limit_max_wait_seconds' => (int)env('RATE_LIMIT_MAX_WAIT_SECONDS', 45),
+
+        // Seconds to block a service after a 429 response when neither an integer
+        // Retry-After header nor a parseRateLimitBlockSeconds() override provides a
+        // duration. The block is stored in Redis (api-remote-block:{service}) so all
+        // callers/forks/retries fail fast without re-hitting the blocked provider.
+        'rate_limit_block_default_seconds' => (int)env('RATE_LIMIT_BLOCK_DEFAULT_SECONDS', 60),
+
+        // Max block duration (seconds) Api::call() will sleep inline before retrying
+        // a 429 in-place (preserves OpenAI-style short-throttle recovery). Longer
+        // blocks throw RateLimitExceededException upward so the job layer can defer
+        // instead of tying up a worker sleeping.
+        'rate_limit_inline_wait_max_seconds' => (int)env('RATE_LIMIT_INLINE_WAIT_MAX_SECONDS', 30),
     ],
 ];

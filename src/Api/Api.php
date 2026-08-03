@@ -191,12 +191,60 @@ abstract class Api
     }
 
     /**
-     * Throttle requests (if $rateLimits is set) to avoid hitting rate limits
+     * The Redis key holding the remote provider block for this service.
+     * The key's TTL is the data — its remaining lifetime is how long the
+     * provider block lasts.
+     */
+    protected function getServiceBlockKey(): string
+    {
+        return 'api-remote-block:' . $this->getServiceName();
+    }
+
+    /**
+     * Register a remote provider block for this service (e.g. after a 429 response).
+     * Every caller, forked child, and retry sharing this Redis instance will then
+     * fail fast in throttle() for the duration instead of re-hitting the blocked
+     * provider with real HTTP calls.
+     */
+    public function registerServiceBlock(int $seconds): void
+    {
+        $seconds = max(1, $seconds);
+
+        Redis::setex($this->getServiceBlockKey(), $seconds, 1);
+
+        static::logWarning($this->getServiceName() . " API blocked by remote rate limit for {$seconds}s");
+    }
+
+    /**
+     * Remaining seconds on this service's remote provider block, or 0 when not blocked.
+     * Redis returns -2 (missing key) / -1 (no TTL) — both clamp to 0.
+     */
+    public function getServiceBlockTtl(): int
+    {
+        return max(0, (int)Redis::ttl($this->getServiceBlockKey()));
+    }
+
+    /**
+     * Throttle requests (if $rateLimits is set) to avoid hitting rate limits.
+     *
+     * Before any local rate-limit accounting, checks the remote provider block
+     * registry — a block registered by a prior 429 response throws immediately
+     * WITHOUT making any HTTP call, so fan-out (forks/retries/other jobs) discovers
+     * the block from Redis instead of hammering the blocked provider.
      *
      * @throws Exception
      */
     public function throttle(): void
     {
+        $blockTtl = $this->getServiceBlockTtl();
+
+        if ($blockTtl > 0) {
+            throw new RateLimitExceededException(
+                $this->getServiceName() . " API is blocked by remote rate limit (retry after {$blockTtl}s)",
+                $blockTtl
+            );
+        }
+
         if ($this->rateLimits) {
             $serviceName = $this->getServiceName();
 
@@ -680,11 +728,31 @@ LUA;
                 $isTimeout = $this->isTimeoutException($exception);
                 $errorType = $isTimeout ? 'timeout' : ($exception instanceof ConnectException ? 'connection_error' : 'request_error');
 
-                // Wrap in ApiRequestException for consistent error handling
-                $message = $isTimeout
-                    ? "Request timed out after {$timeout}s (from {$timeoutSource})"
-                    : ($exception instanceof ConnectException ? 'Connection failed' : '');
-                $lastException = new ApiRequestException($this->getServiceName(), $exception, $message);
+                $errorResponse = $exception instanceof RequestException ? $exception->getResponse() : null;
+
+                if ($errorResponse && $errorResponse->getStatusCode() === 429) {
+                    // Remote provider rate limit — register a shared block so every
+                    // other caller/fork/retry fails fast in throttle() instead of
+                    // re-hitting the blocked provider with real HTTP calls.
+                    $blockSeconds = $this->resolveRateLimitBlockSeconds($errorResponse);
+                    $this->registerServiceBlock($blockSeconds);
+
+                    $bodySnippet = StringHelper::limitText(500, StringHelper::safeConvertToUTF8((string)$errorResponse->getBody()));
+                    $errorResponse->getBody()->rewind();
+
+                    $errorType     = 'rate_limit';
+                    $lastException = new RateLimitExceededException(
+                        $this->getServiceName() . " API returned 429 (blocked for {$blockSeconds}s): $bodySnippet",
+                        $blockSeconds,
+                        $exception
+                    );
+                } else {
+                    // Wrap in ApiRequestException for consistent error handling
+                    $message = $isTimeout
+                        ? "Request timed out after {$timeout}s (from {$timeoutSource})"
+                        : ($exception instanceof ConnectException ? 'Connection failed' : '');
+                    $lastException = new ApiRequestException($this->getServiceName(), $exception, $message);
+                }
 
                 // Log the error
                 static::logWarning("Request failed: {$type} {$url} elapsed={$elapsed}s is_timeout=" . ($isTimeout ? 'true' : 'false') . " timeout={$timeout}s (from {$timeoutSource})");
@@ -693,9 +761,26 @@ LUA;
                     ApiLog::logResponseError($this->currentApiLog, $exception, $errorType);
                 }
 
-                // Check if we should retry
                 $hasRetriesRemaining = $attempt <= $maxRetries;
-                $isRetryable         = RetryableErrorChecker::isApiRetryable($lastException);
+
+                // Rate-limit responses bypass the generic retryable check: short blocks
+                // are waited out inline (OpenAI-style throttle recovery), long blocks are
+                // thrown upward immediately so the job layer can defer instead of sleeping.
+                if ($lastException instanceof RateLimitExceededException) {
+                    $inlineWaitMax = (int)config('danx.errors.rate_limit_inline_wait_max_seconds', 30);
+
+                    if ($hasRetriesRemaining && $lastException->retryAfterSeconds <= $inlineWaitMax) {
+                        static::logDebug("[RATE LIMITED] Waiting {$lastException->retryAfterSeconds}s inline before retry (attempt {$attempt}/{$maxRetries})");
+                        sleep($lastException->retryAfterSeconds);
+
+                        continue;
+                    }
+
+                    break;
+                }
+
+                // Check if we should retry
+                $isRetryable = RetryableErrorChecker::isApiRetryable($lastException);
 
                 if ($hasRetriesRemaining && $isRetryable) {
                     $delayMs = $this->getRetryDelayMs();
@@ -800,6 +885,34 @@ LUA;
     public function getRawContent()
     {
         return $this->rawContent;
+    }
+
+    /**
+     * Resolve how long a 429 response should block this service, in priority order:
+     * integer Retry-After response header → per-API parseRateLimitBlockSeconds()
+     * override → configured default.
+     */
+    protected function resolveRateLimitBlockSeconds(ResponseInterface $response): int
+    {
+        $retryAfter = $response->getHeaderLine('Retry-After');
+
+        if ($retryAfter !== '' && ctype_digit($retryAfter)) {
+            return max(1, (int)$retryAfter);
+        }
+
+        return $this->parseRateLimitBlockSeconds($response)
+            ?? (int)config('danx.errors.rate_limit_block_default_seconds', 60);
+    }
+
+    /**
+     * Per-API override hook: parse a provider-specific block duration (in seconds)
+     * out of a 429 response — e.g. a "You are Blocked for 1 Hour" body message —
+     * when the provider doesn't send a Retry-After header. Return null to fall back
+     * to the configured default.
+     */
+    protected function parseRateLimitBlockSeconds(ResponseInterface $response): ?int
+    {
+        return null;
     }
 
     /**
