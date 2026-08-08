@@ -159,6 +159,17 @@ class TranscodeFileService
         $missingPages = $this->getMissingPageNumbers($storedFile, $transcodeName, $existing);
 
         if (empty($missingPages)) {
+            // Heal a status stuck In Progress/Pending even though enough real pages already
+            // exist — e.g. a sub-document extracted from a combined upload keeps its pages
+            // numbered by their ORIGINAL position (435-439 for a 5-page doc that was pages
+            // 435-439 of a 439-page combined PDF). getMissingPageNumbers already treats that
+            // as complete, but nothing else ever flips the status back to Complete, so the
+            // SF is_transcoding flag would otherwise stay stuck true forever.
+            $status = $storedFile->meta['transcodes'][$transcodeName]['status'] ?? null;
+            if ($status !== self::STATUS_COMPLETE) {
+                $this->complete($storedFile, $transcodeName);
+            }
+
             return false;
         }
 
@@ -190,6 +201,17 @@ class TranscodeFileService
             ->filter()
             ->map(fn($n) => (int)$n)
             ->all();
+
+        // Page numbering isn't always contiguous-from-1 — a sub-document extracted from a
+        // combined upload can keep its pages numbered by their ORIGINAL position (e.g.
+        // 435-439 for a 5-page doc that was pages 435-439 of a 439-page combined PDF).
+        // Once at least `expectedPages` distinct real rows exist, there's nothing left to
+        // recover regardless of what the actual numbers are — checking literal membership
+        // in [1, expectedPages] below would otherwise never be satisfiable for such a file
+        // and recovery would loop forever.
+        if (count(array_unique($presentPages)) >= $expectedPages) {
+            return [];
+        }
 
         $missing = [];
         for ($page = 1; $page <= $expectedPages; $page++) {
