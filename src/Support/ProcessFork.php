@@ -292,12 +292,24 @@ class ProcessFork
             $status    = 0;
             $exitedPid = pcntl_waitpid(-1, $status, WNOHANG);
 
-            if ($exitedPid > 0 && isset($activeChildren[$exitedPid])) {
-                $taskIndex = $activeChildren[$exitedPid];
-                unset($activeChildren[$exitedPid]);
-                $results[$taskIndex] = self::readChildResult($tempFiles[$taskIndex], $status);
+            if ($exitedPid > 0) {
+                if (isset($activeChildren[$exitedPid])) {
+                    $taskIndex = $activeChildren[$exitedPid];
+                    unset($activeChildren[$exitedPid]);
+                    $results[$taskIndex] = self::readChildResult($tempFiles[$taskIndex], $status);
 
-                return $exitedPid;
+                    return $exitedPid;
+                }
+
+                // Reaped a child that is not one of ours — a stray left behind by an
+                // earlier run in this same long-lived process (queue workers host many
+                // ProcessFork runs over their lifetime, and pcntl_waitpid(-1) reaps ANY
+                // child, not just this run's). Keep draining immediately: falling through
+                // to the sleep below costs 0.5s per stray, so a worker carrying N stale
+                // zombies stalls N/2 seconds before it can see its OWN children exit.
+                // Measured: 40 strays turned a 1.6s 3-wave fan-out into 24s; the 1,441
+                // strays observed under one queue:work process blew a worker's deadline.
+                continue;
             }
 
             // Check cancellation
