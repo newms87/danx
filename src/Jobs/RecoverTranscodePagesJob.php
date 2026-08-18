@@ -31,6 +31,20 @@ class RecoverTranscodePagesJob extends Job
         return 'recover-transcode-pages:' . $this->transcodeName . ':' . $this->storedFile->id;
     }
 
+    /**
+     * Dispatched asynchronously from TaskOrchestratorJob/TaskWorkerJob/the sweeper command
+     * (see class docblock) -- those callers run with a real authenticated user/team, but
+     * that context does not survive onto this job's own queue-worker execution. Safe:
+     * run() never touches Auth/team() globals -- recoverPages() calls the transcoder (an
+     * external HTTP call) then dispatchDataUrlBatch(), whose TranscodeDataUrlToStoredFileJob
+     * members set team_id explicitly from the resolved StoredFile relation (SG-98's
+     * identical fix, same reasoning).
+     */
+    protected function requiresAuth(): bool
+    {
+        return false;
+    }
+
     public function run()
     {
         app(TranscodeFileService::class)->recoverPages($this->storedFile, $this->transcodeName, $this->pageNumbers);
