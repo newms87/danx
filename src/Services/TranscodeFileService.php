@@ -45,6 +45,19 @@ class TranscodeFileService
     // finished. Auto-expires — no explicit release needed.
     const int RECOVERY_LOCK_TTL_SECONDS = 300;
 
+    // TTL for transcode()'s own in-flight lock (SG-193). transcode()'s "existing rows present
+    // but incomplete" branch has no way to distinguish "a prior attempt genuinely failed
+    // partway" from "the initial dispatchDataUrlBatch() from THIS SAME transcode() call is
+    // still draining" -- a second transcode() call landing mid-drain (e.g. a duplicate
+    // trigger, a UI-driven resolve-and-kick-off race) sees only the handful of rows written
+    // so far and misreads it as most pages missing, dispatching a full duplicate render.
+    // Reproduced 2026-08-18 on a real 434-page COPELAND run: a second call 8 seconds after
+    // the initial dispatch read 5/434 rows and "recovered" the other 429, doubling almost
+    // every page. Sized like RECOVERY_LOCK_TTL_SECONDS -- comfortably longer than the
+    // largest expected page-image batch takes to fully drain through the queue. Auto-expires
+    // -- no explicit release needed, matching this class's existing lock idiom.
+    const int TRANSCODE_DISPATCH_LOCK_TTL_SECONDS = 300;
+
     public function storeTranscodedFile(StoredFile $storedFile, $transcodeName, $filename, $data, ?int $pageNumber = null): StoredFile
     {
         $dir                                     = $storedFile->id;
@@ -106,6 +119,7 @@ class TranscodeFileService
         static::logDebug("Transcode $transcodeName: $storedFile");
 
         $existing = $storedFile->transcodes()->where('transcode_name', $transcodeName)->get();
+        $lockKey  = "transcode-dispatch:$transcodeName:{$storedFile->id}";
 
         if ($existing->isNotEmpty()) {
             $missingPages = $this->getMissingPageNumbers($storedFile, $transcodeName, $existing);
@@ -116,9 +130,21 @@ class TranscodeFileService
                 return $existing;
             }
 
+            if (!LockHelper::get($lockKey, self::TRANSCODE_DISPATCH_LOCK_TTL_SECONDS)) {
+                static::logDebug("Transcode dispatch already in flight for $transcodeName $storedFile, skipping duplicate recovery dispatch");
+
+                return $existing;
+            }
+
             static::logDebug('Recovering ' . count($missingPages) . " missing $transcodeName page(s) for $storedFile");
 
             $this->dispatchPartialBatch($storedFile, $transcodeName, $missingPages);
+
+            return $existing;
+        }
+
+        if (!LockHelper::get($lockKey, self::TRANSCODE_DISPATCH_LOCK_TTL_SECONDS)) {
+            static::logDebug("Transcode dispatch already in flight for $transcodeName $storedFile, skipping duplicate initial dispatch");
 
             return $existing;
         }
