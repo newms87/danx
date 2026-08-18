@@ -72,17 +72,56 @@ class TranscodeFileServiceInFlightLockTest extends TestCase
         // -- a real duplicate render, since the FIRST batch is still legitimately in flight
         // for all 10.
         //
-        // In production the two calls run in genuinely separate processes (different queue
-        // workers / requests), so each independently checks the real Redis-backed lock.
-        // LockHelper::$acquiredLocks is a same-process in-memory shortcut ("I already hold
-        // this, proceed") that would otherwise make the second call in THIS single test
-        // process wrongly see its own first acquisition as success. Clearing it here
-        // simulates the real cross-process condition the lock exists to guard against.
+        // Cleared for realism (two genuinely separate processes each start with an empty
+        // $acquiredLocks) but no longer load-bearing for this test's assertion: the lock
+        // calls now use LockHelper::getDistributed(), which never reads or writes
+        // $acquiredLocks at all -- see the un-cleared sibling test below, which is the one
+        // that actually proves the same-process case (the one that was silently broken).
         LockHelper::$acquiredLocks = [];
 
         app(TranscodeFileService::class)->transcode(self::TRANSCODE_NAME, $storedFile->fresh());
 
         Bus::assertNotDispatched(RecoverTranscodePagesJob::class);
+    }
+
+    /** @test */
+    public function a_second_recovery_dispatch_on_the_same_worker_process_is_still_blocked_without_clearing_acquired_locks(): void
+    {
+        Bus::fake();
+
+        $storedFile = $this->makeStoredFile();
+        $storedFile->setMeta('transcodes', [
+            self::TRANSCODE_NAME => ['status' => TranscodeFileService::STATUS_IN_PROGRESS, 'expected_pages' => 10],
+        ])->save();
+        $storedFile->transcodes()->create([
+            'transcode_name' => self::TRANSCODE_NAME,
+            'page_number'    => 1,
+            'filename'       => 'page-1.png',
+            'filepath'       => 'transcodes/page-1.png',
+        ]);
+
+        // First recovery trigger -- e.g. dispatchDataUrlBatch()'s on_complete straggler
+        // recursion calling recoverIncompleteTranscode() directly after the FIRST full
+        // batch's own on_complete fires. Acquires the "recover-transcode:..." lock (never
+        // explicitly released -- TTL-only by design) and dispatches recovery for the 9
+        // still-missing pages.
+        app(TranscodeFileService::class)->recoverIncompleteTranscode($storedFile->fresh(), self::TRANSCODE_NAME);
+        Bus::assertDispatched(RecoverTranscodePagesJob::class, 1);
+
+        // Deliberately NOT clearing LockHelper::$acquiredLocks -- this is the real SG-193
+        // production shape: a long-lived Horizon worker process (maxJobs=0/maxTime=0) that
+        // handled the FIRST recovery trigger above is the SAME process handling this
+        // SECOND, independent trigger moments later (e.g. a straggler member of the first
+        // recovery batch itself completing and re-checking via the same on_complete path).
+        // Reproduced live on a real 434-page COPELAND run (team 132/WR-32, 2026-08-18):
+        // "Recovering 419 missing" followed 62s later by "Recovering 87 missing" for the
+        // SAME file -- both well within the lock's own 300s TTL -- because
+        // LockHelper::get()'s in-memory shortcut made the second call see "already
+        // acquired" and skip the real (still-valid) Redis check entirely, firing a
+        // duplicate render for pages already in flight from the first dispatch.
+        app(TranscodeFileService::class)->recoverIncompleteTranscode($storedFile->fresh(), self::TRANSCODE_NAME);
+
+        Bus::assertDispatched(RecoverTranscodePagesJob::class, 1);
     }
 
     /** @test */

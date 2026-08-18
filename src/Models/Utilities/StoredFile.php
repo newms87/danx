@@ -105,6 +105,8 @@ class StoredFile extends Model implements AuditableContract
         'meta',
         'original_stored_file_id',
         'transcode_name',
+        'page_number',
+        'team_id',
     ];
 
     protected $casts = [

@@ -7,7 +7,9 @@ use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Storage;
 use Newms87\Danx\Exceptions\ApiException;
+use Newms87\Danx\Helpers\FileHelper;
 use Newms87\Danx\Helpers\LockHelper;
 use Newms87\Danx\Jobs\RecoverTranscodePagesJob;
 use Newms87\Danx\Jobs\TranscodeDataUrlToStoredFileJob;
@@ -58,18 +60,56 @@ class TranscodeFileService
     // -- no explicit release needed, matching this class's existing lock idiom.
     const int TRANSCODE_DISPATCH_LOCK_TTL_SECONDS = 300;
 
+    /**
+     * SG-193: the final choke point every transcode write passes through (PDF-to-Images page
+     * splits, OCR text, LLM text alike) -- the DB-level backstop against a duplicate row,
+     * regardless of which application-level race caused a second write to be attempted (a
+     * dispatch-guard lock miss, a job's own "allow duplicate once Running" debounce escape
+     * hatch, a duplicate webhook delivery, concurrent worker resume, or any race not yet
+     * discovered). `stored_files_transcode_unique` / `_null_page` (migration 0015) enforce
+     * uniqueness on (original_stored_file_id, transcode_name, page_number) at the database
+     * itself.
+     *
+     * The DB row is created directly with its transcode-association fields already set (one
+     * atomic insert), rather than an insert-then-update -- a losing race on an insert-then-
+     * update shape would leave an orphaned base row behind (content on disk, but never
+     * associated to its parent), permanently invisible to transcodes() and un-sweepable
+     * (indistinguishable from a legitimate root file once its association fields are null).
+     *
+     * Uses Eloquent's own createOrFirst() (Laravel core, not an app-level transaction) so a
+     * losing race is a harmless no-op: it attempts the insert and, on a
+     * UniqueConstraintViolationException, re-queries and returns the winning writer's row
+     * instead of throwing. createOrFirst() wraps the attempt in a savepoint when already
+     * inside an ambient transaction (e.g. a test's DatabaseTransactions wrapper), so recovery
+     * never needs -- and this method must never add -- an app-level DB::transaction()/
+     * beginTransaction() of its own (forbidden repo-wide: rolling one back deletes
+     * AuditRequest rows and destroys error visibility for the request).
+     */
     public function storeTranscodedFile(StoredFile $storedFile, $transcodeName, $filename, $data, ?int $pageNumber = null): StoredFile
     {
-        $dir                                     = $storedFile->id;
-        $filepath                                = "transcodes/$transcodeName/$dir/$filename";
-        $transcodedFile                          = app(FileRepository::class)->createFileWithContents($filepath, $data);
-        $transcodedFile->team_id                 = $storedFile->team_id;
-        $transcodedFile->original_stored_file_id = $storedFile->id;
-        $transcodedFile->transcode_name          = $transcodeName;
-        $transcodedFile->page_number             = $pageNumber ?? $storedFile->page_number;
-        $transcodedFile->save();
+        $dir                = $storedFile->id;
+        $filepath           = "transcodes/$transcodeName/$dir/$filename";
+        $disk               = config('filesystems.default');
+        $resolvedPageNumber = $pageNumber ?? $storedFile->page_number;
 
-        return $transcodedFile;
+        app(FileRepository::class)->storeOnDisk($filepath, $data, $disk);
+
+        return StoredFile::query()->createOrFirst(
+            [
+                'original_stored_file_id' => $storedFile->id,
+                'transcode_name'          => $transcodeName,
+                'page_number'             => $resolvedPageNumber,
+            ],
+            [
+                'disk'     => $disk,
+                'filepath' => $filepath,
+                'filename' => $filename,
+                'url'      => Storage::disk($disk)->url($filepath),
+                'mime'     => FileHelper::getMimeFromExtension($filepath),
+                'size'     => strlen($data),
+                'team_id'  => $storedFile->team_id,
+            ],
+        );
     }
 
     /**
@@ -130,7 +170,7 @@ class TranscodeFileService
                 return $existing;
             }
 
-            if (!LockHelper::get($lockKey, self::TRANSCODE_DISPATCH_LOCK_TTL_SECONDS)) {
+            if (!LockHelper::getDistributed($lockKey, self::TRANSCODE_DISPATCH_LOCK_TTL_SECONDS)) {
                 static::logDebug("Transcode dispatch already in flight for $transcodeName $storedFile, skipping duplicate recovery dispatch");
 
                 return $existing;
@@ -143,7 +183,7 @@ class TranscodeFileService
             return $existing;
         }
 
-        if (!LockHelper::get($lockKey, self::TRANSCODE_DISPATCH_LOCK_TTL_SECONDS)) {
+        if (!LockHelper::getDistributed($lockKey, self::TRANSCODE_DISPATCH_LOCK_TTL_SECONDS)) {
             static::logDebug("Transcode dispatch already in flight for $transcodeName $storedFile, skipping duplicate initial dispatch");
 
             return $existing;
@@ -292,7 +332,7 @@ class TranscodeFileService
     private function dispatchPartialBatch(StoredFile $storedFile, string $transcodeName, array $pageNumbers): bool
     {
         $lockKey = "recover-transcode:$transcodeName:{$storedFile->id}";
-        if (!LockHelper::get($lockKey, self::RECOVERY_LOCK_TTL_SECONDS)) {
+        if (!LockHelper::getDistributed($lockKey, self::RECOVERY_LOCK_TTL_SECONDS)) {
             static::logDebug("Recovery already in flight for $transcodeName page(s) of $storedFile, skipping duplicate dispatch");
 
             return false;

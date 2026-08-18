@@ -105,6 +105,44 @@ class LockHelper
 	}
 
 	/**
+	 * Get a lock on a key, always checking the real distributed backend --
+	 * NEVER short-circuited by the in-memory $acquiredLocks reentrancy cache.
+	 *
+	 * get()'s in-memory shortcut exists so a single call stack that legitimately
+	 * re-enters the same lock doesn't block itself. But any caller that acquires
+	 * via get() and (correctly, per a TTL-based "auto-expires, never explicitly
+	 * released" design) never calls release() will see get() return true for
+	 * that key FOREVER, for the remaining lifetime of the PHP process --
+	 * regardless of whether the real distributed lock has actually expired.
+	 * Long-lived queue workers (Horizon with maxJobs=0/maxTime=0) process
+	 * thousands of unrelated jobs per process, so this silently defeats mutual
+	 * exclusion between independent, later job invocations that happen to land
+	 * on the same worker process.
+	 *
+	 * SG-193: this is exactly what let a second, independent transcode-recovery
+	 * dispatch slip past TranscodeFileService's supposedly TTL-bounded lock and
+	 * fire a duplicate render for pages already in flight from an earlier
+	 * dispatch on the same worker process, well within the lock's own TTL.
+	 *
+	 * Use this instead of get() for any lock meant to coordinate across
+	 * independent async dispatches (separate jobs/requests), rather than
+	 * same-call-stack reentrancy, where the lock is intentionally never
+	 * explicitly released.
+	 */
+	public static function getDistributed($key, $ttl = LockHelper::TTL): bool
+	{
+		$key = self::resolveKey($key);
+
+		$isAcquired = Cache::lock($key, $ttl)->get();
+
+		if ($isAcquired) {
+			Log::debug("🔴🔒 ACQUIRED (distributed): $key");
+		}
+
+		return $isAcquired;
+	}
+
+	/**
 	 * Re-set the TTL on an already-held lock without re-blocking.
 	 *
 	 * Force-releases the underlying cache lock and immediately re-acquires it with
