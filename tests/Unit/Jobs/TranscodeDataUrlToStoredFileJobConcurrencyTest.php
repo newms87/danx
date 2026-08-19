@@ -32,18 +32,22 @@ class TranscodeDataUrlToStoredFileJobConcurrencyTest extends TestCase
 
         for ($i = 0; $i < $taskCount; $i++) {
             $tasks[] = function () use ($i, $logPath) {
-                $storedFile = new StoredFile([
-                    'filename' => 'source.pdf',
-                    'filepath' => 'source.pdf',
-                    'url'      => 'https://example.com/source.pdf',
-                    'mime'     => 'application/pdf',
-                ]);
-
-                $job = new TranscodeDataUrlToStoredFileJob($storedFile, 'PDF to Images', [
+                // SG-205: the job now migrates an already-inserted row rather than creating
+                // one, so its ref() (and therefore its concurrency slot) is keyed on the
+                // row's own id. These instances are never saved (so UuidModelTrait's
+                // creating-hook never fires) and `id` is not fillable, so mass-assignment
+                // would silently drop it -- set it directly to keep each task's slot
+                // distinct, matching what a real insertPendingTranscodedFiles() row would
+                // already have.
+                $storedFile     = new StoredFile([
                     'filename' => "page-$i.png",
+                    'filepath' => "page-$i.png",
                     'url'      => "https://example.com/page-$i.png",
-                    'page'     => $i,
+                    'mime'     => 'image/png',
                 ]);
+                $storedFile->id = "sg201-concurrency-test-page-$i";
+
+                $job = new TranscodeDataUrlToStoredFileJob($storedFile);
 
                 $slotKeyMethod = new ReflectionMethod($job, 'concurrencySlotKey');
                 $slotKeyMethod->setAccessible(true);

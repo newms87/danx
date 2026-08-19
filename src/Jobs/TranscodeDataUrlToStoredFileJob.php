@@ -9,7 +9,7 @@ use Newms87\Danx\Services\TranscodeFileService;
 class TranscodeDataUrlToStoredFileJob extends Job
 {
     /**
-     * 120-second worker timeout. The download inside TranscodeFileService::moveDataUrlToStoredFile
+     * 120-second worker timeout. The download inside TranscodeFileService::migrateTranscodedFileToStorage
      * uses 50s + 1 retry (worst case ~100s) so this floor is wide enough to allow a retry
      * to complete inside the worker without SIGTERM.
      */
@@ -25,40 +25,36 @@ class TranscodeDataUrlToStoredFileJob extends Job
      * gpt-manager job_batches id 13: 31 real connection-refused failures on a 434-page batch).
      *
      * This job is the one place that concurrency is actually spent (the DB-touching work
-     * lives in moveDataUrlToStoredFile()), so it is the right place to bound it -- not the
-     * dispatch site, which would need to know a queue-infrastructure detail (the worker pool
-     * size) that varies per deployment and isn't this service's concern.
+     * lives in migrateTranscodedFileToStorage()), so it is the right place to bound it --
+     * not the dispatch site, which would need to know a queue-infrastructure detail (the
+     * worker pool size) that varies per deployment and isn't this service's concern.
+     *
+     * SG-205: the row this job migrates is now inserted synchronously BEFORE this job ever
+     * runs (TranscodeFileService::insertPendingTranscodedFiles()) -- this job only moves its
+     * bytes to our own storage and updates that same row in place. It no longer creates
+     * anything.
      */
     public const int MAX_CONCURRENT = 10;
 
-    private StoredFile $storedFile;
+    private StoredFile $transcodedStoredFile;
 
-    private string $transcodeName;
-
-    private array $transcodedFile;
-
-    public function __construct(StoredFile $storedFile, string $transcodeName, array $transcodedFile)
+    public function __construct(StoredFile $transcodedStoredFile)
     {
-        $this->storedFile     = $storedFile;
-        $this->transcodeName  = $transcodeName;
-        $this->transcodedFile = $transcodedFile;
+        $this->transcodedStoredFile = $transcodedStoredFile;
         parent::__construct();
     }
 
     public function ref(): string
     {
-        return 'transcode-data-url-to-stored-file:' . $this->transcodeName . ':' . $this->storedFile->id . ':' . md5(json_encode($this->transcodedFile));
+        return 'transcode-data-url-to-stored-file:' . $this->transcodedStoredFile->id;
     }
 
     /**
-     * Reached exclusively via the OCR callback chain (OcrCallbackController ->
-     * ProcessOcrCallbackJob -> TranscodePrerequisiteService::persistOcrResult ->
-     * TranscodeFileService::moveDataUrlToStoredFile) -- a machine-to-machine
-     * webhook authenticated by a callback token, never a Laravel user session,
-     * so no user/team context exists to inherit. Safe: moveDataUrlToStoredFile()
-     * -> storeTranscodedFile() sets team_id explicitly from the already-resolved
-     * $storedFile relation, never from Auth/team() globals. Mirrors
-     * ProcessOcrCallbackJob's identical override for the same reason.
+     * Reached exclusively via the async migration batch TranscodeFileService::
+     * dispatchDataUrlBatch() dispatches after inserting the pending row -- no user/team
+     * session exists on a queue worker. Safe: migrateTranscodedFileToStorage() updates a
+     * row whose team_id was already set explicitly at insert time, never from Auth/team()
+     * globals.
      */
     protected function requiresAuth(): bool
     {
@@ -83,7 +79,7 @@ class TranscodeDataUrlToStoredFileJob extends Job
         LockHelper::acquire($slotKey);
 
         try {
-            app(TranscodeFileService::class)->moveDataUrlToStoredFile($this->storedFile, $this->transcodeName, $this->transcodedFile);
+            app(TranscodeFileService::class)->migrateTranscodedFileToStorage($this->transcodedStoredFile);
         } finally {
             LockHelper::release($slotKey);
         }

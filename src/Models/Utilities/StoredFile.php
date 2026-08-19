@@ -107,12 +107,14 @@ class StoredFile extends Model implements AuditableContract
         'transcode_name',
         'page_number',
         'team_id',
+        'migrated_at',
     ];
 
     protected $casts = [
-        'exif'     => 'json',
-        'meta'     => 'json',
-        'location' => 'json',
+        'exif'        => 'json',
+        'meta'        => 'json',
+        'location'    => 'json',
+        'migrated_at' => 'datetime',
     ];
 
     protected static function newFactory()

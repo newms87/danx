@@ -360,58 +360,111 @@ class TranscodeFileService
     }
 
     /**
-     * Create a JobBatch of TranscodeDataUrlToStoredFileJob members. on_complete marks the
-     * SF status Complete and runs one round of recovery — so a single batch-member failure
-     * does not require a sweep to reach the next attempt.
+     * SG-205: insert every page's stored_files row synchronously from the transcoder's own
+     * manifest (no downloads — PdfToImagesTranscoder::run() already surfaces filename/url/
+     * page_number/size from ConvertAPI's response) so consumers waiting on is_transcoding
+     * unblock immediately instead of waiting for every page's bytes to reach our storage.
+     * `url` initially points at the transcoder's own (temporary) source; disk/filepath are
+     * pre-computed to their real FINAL destination even though nothing lives there yet, so
+     * a force-delete against a not-yet-migrated row is a benign no-op rather than an error.
+     * `migrated_at` stays NULL until dispatchDataUrlBatch()'s async job (below) moves the
+     * bytes and updates the row in place.
+     *
+     * Mirrors storeTranscodedFile()'s own createOrFirst() shape — association fields are
+     * set atomically in the same call as everything else, so a losing race against SG-193's
+     * partial unique index re-queries the winning writer's row instead of throwing, and
+     * never leaves an orphaned, unassociated row behind.
+     *
+     * @return Collection<int,StoredFile>
+     */
+    private function insertPendingTranscodedFiles(StoredFile $storedFile, string $transcodeName, array $transcodedFiles): Collection
+    {
+        $rows = new Collection;
+
+        foreach ($transcodedFiles as $transcodedFile) {
+            $filename   = $transcodedFile['filename']    ?? null;
+            $url        = $transcodedFile['url']         ?? null;
+            $pageNumber = $transcodedFile['page_number'] ?? null;
+            $size       = $transcodedFile['size']        ?? 0;
+
+            if (!$url) {
+                throw new Exception('Transcoded file does not have a URL');
+            }
+
+            if (!$filename) {
+                throw new Exception('Transcoded file does not have a filename');
+            }
+
+            $dir                = $storedFile->id;
+            $filepath           = "transcodes/$transcodeName/$dir/$filename";
+            $disk               = config('filesystems.default');
+            $resolvedPageNumber = $pageNumber ?? $storedFile->page_number;
+
+            $rows->push(StoredFile::query()->createOrFirst(
+                [
+                    'original_stored_file_id' => $storedFile->id,
+                    'transcode_name'          => $transcodeName,
+                    'page_number'             => $resolvedPageNumber,
+                ],
+                [
+                    'disk'        => $disk,
+                    'filepath'    => $filepath,
+                    'filename'    => $filename,
+                    'url'         => $url,
+                    'mime'        => FileHelper::getMimeFromExtension($filepath),
+                    'size'        => $size,
+                    'team_id'     => $storedFile->team_id,
+                    'migrated_at' => null,
+                ],
+            ));
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Create a JobBatch of TranscodeDataUrlToStoredFileJob members that migrate each
+     * already-inserted row's bytes to our own storage asynchronously — is_transcoding is
+     * already false by the time this dispatches (see insertPendingTranscodedFiles() above),
+     * so this batch is off the critical path entirely; nothing waits on it. SG-201's
+     * LockHelper concurrency cap (preserved unchanged in the job) still bounds how many
+     * downloads/DB writes run at once.
      */
     private function dispatchDataUrlBatch(StoredFile $storedFile, string $transcodeName, array $transcodedFiles): void
     {
+        $rows = $this->insertPendingTranscodedFiles($storedFile, $transcodeName, $transcodedFiles);
+
+        $this->complete($storedFile, $transcodeName);
+
+        $storedFile->refresh();
+        $this->recoverIncompleteTranscode($storedFile, $transcodeName);
+
         $batchJobs = [];
-        foreach ($transcodedFiles as $transcodedFile) {
-            $batchJobs[] = (new TranscodeDataUrlToStoredFileJob($storedFile, $transcodeName, $transcodedFile));
+        foreach ($rows as $row) {
+            $batchJobs[] = new TranscodeDataUrlToStoredFileJob($row);
         }
 
-        $storedFileId = $storedFile->id;
-        JobBatch::createForJobs(
-            "Store transcoded files for $transcodeName",
-            $batchJobs,
-            function () use ($storedFileId, $transcodeName) {
-                $sf = StoredFile::find($storedFileId);
-                if (!$sf) {
-                    return;
-                }
-
-                $service = app(TranscodeFileService::class);
-                $service->complete($sf, $transcodeName);
-
-                // Refresh meta then check for stragglers. dispatchPartialBatch will fire a
-                // second batch when rows < expected_pages — the SF is re-flipped to
-                // In Progress and the cycle continues until pages match or operator picks
-                // up the SF via the sweeper.
-                $sf->refresh();
-                $service->recoverIncompleteTranscode($sf, $transcodeName);
-            },
-        );
+        JobBatch::createForJobs("Migrate transcoded files for $transcodeName", $batchJobs);
     }
 
-    public function moveDataUrlToStoredFile(StoredFile $storedFile, string $transcodeName, array $transcodedFile): StoredFile
+    /**
+     * Download an already-inserted transcode row's bytes from its current (pending) `url`
+     * and move them to our own storage, updating the SAME row in place — never a new insert.
+     * `disk`/`filepath` were already pre-computed at insert time (insertPendingTranscodedFiles()
+     * above) to their real final destination, so this only ever performs an UPDATE.
+     */
+    public function migrateTranscodedFileToStorage(StoredFile $transcodedStoredFile): StoredFile
     {
-        $filename   = $transcodedFile['filename']    ?? null;
-        $url        = $transcodedFile['url']         ?? null;
-        $pageNumber = $transcodedFile['page_number'] ?? null;
+        $url = $transcodedStoredFile->url;
 
         if (!$url) {
             throw new Exception('Transcoded file does not have a URL');
         }
 
-        if (!$filename) {
-            throw new Exception('Transcoded file does not have a filename');
-        }
-
         // 50-second HTTP timeout + 1 retry (100ms backoff). Worst case ~100s — fits inside the
         // 120s TranscodeDataUrlToStoredFileJob worker timeout. Replaces a naked file_get_contents
         // which had no timeout and could be SIGTERM'd by Laravel's default 60s worker timeout
-        // mid-download, stranding the JobBatch counter and starving the on_complete callback.
+        // mid-download, stranding the JobBatch counter.
         try {
             $response = Http::timeout(50)
                 ->retry(2, 100, throw: false)
@@ -422,7 +475,14 @@ class TranscodeFileService
             throw new Exception("Failed to download transcoded file from $url: " . $exception->getMessage(), 0, $exception);
         }
 
-        return $this->storeTranscodedFile($storedFile, $transcodeName, $filename, $data, $pageNumber);
+        app(FileRepository::class)->storeOnDisk($transcodedStoredFile->filepath, $data, $transcodedStoredFile->disk);
+
+        $transcodedStoredFile->url         = Storage::disk($transcodedStoredFile->disk)->url($transcodedStoredFile->filepath);
+        $transcodedStoredFile->size        = strlen($data);
+        $transcodedStoredFile->migrated_at = now();
+        $transcodedStoredFile->save();
+
+        return $transcodedStoredFile;
     }
 
     /**

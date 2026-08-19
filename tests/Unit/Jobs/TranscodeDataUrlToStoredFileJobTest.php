@@ -14,7 +14,7 @@ class TranscodeDataUrlToStoredFileJobTest extends TestCase
     {
         $storedFile = new StoredFile(['filename' => 'source.pdf', 'filepath' => 'source.pdf', 'url' => 'https://example.com/source.pdf', 'mime' => 'application/pdf']);
 
-        $job = new TranscodeDataUrlToStoredFileJob($storedFile, 'ocr', ['filename' => 'f.txt', 'url' => 'https://example.com/f.txt']);
+        $job = new TranscodeDataUrlToStoredFileJob($storedFile);
 
         $requiresAuth = new ReflectionMethod($job, 'requiresAuth');
         $requiresAuth->setAccessible(true);
@@ -27,7 +27,7 @@ class TranscodeDataUrlToStoredFileJobTest extends TestCase
     {
         $storedFile = new StoredFile(['filename' => 'source.pdf', 'filepath' => 'source.pdf', 'url' => 'https://example.com/source.pdf', 'mime' => 'application/pdf']);
 
-        $job = new TranscodeDataUrlToStoredFileJob($storedFile, 'ocr', ['filename' => 'f.txt', 'url' => 'https://example.com/f.txt']);
+        $job = new TranscodeDataUrlToStoredFileJob($storedFile);
 
         $validateAuthContext = new ReflectionMethod($job, 'validateAuthContext');
         $validateAuthContext->setAccessible(true);

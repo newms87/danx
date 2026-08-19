@@ -31,47 +31,32 @@ class TranscodeFileServiceInFlightLockTest extends TestCase
     }
 
     /** @test */
-    public function a_second_transcode_call_mid_drain_does_not_dispatch_a_duplicate_recovery(): void
+    public function a_second_transcode_call_while_the_first_dispatch_lock_is_still_held_does_not_re_render(): void
     {
         Bus::fake();
 
         $storedFile = $this->makeStoredFile();
 
-        // First call: no existing rows -- dispatches the initial full batch (10 fake pages)
-        // and acquires the in-flight lock.
+        // SG-205: dispatchDataUrlBatch() now inserts every row synchronously -- there is no
+        // longer a window where only some of the initial batch's rows exist, so a second
+        // call can no longer observe a "2 of 10 present" mid-drain state (the original
+        // premise of this test). The still-live race this guards is narrower but real: two
+        // overlapping transcode() calls for the SAME never-before-seen StoredFile must not
+        // both pay for a real ConvertAPI render -- the dispatch lock (TTL-only, held well
+        // past the first call's now-synchronous completion) must block the second entirely.
+        // Mockery's ->once() below fails the test outright if run() is ever invoked twice.
         $this->mock(PdfToImagesTranscoder::class)
             ->shouldReceive('usesDataUrls')->andReturn(true)
             ->shouldReceive('startingProgress')->andReturn(90.0)
             ->shouldReceive('timeEstimate')->andReturn(5000)
             ->shouldReceive('getTimeout')->andReturn(1800)
             ->shouldReceive('run')->once()->andReturn(array_map(
-                fn(int $i) => ['filename' => "page-$i.png", 'url' => "https://example.com/page-$i.png", 'page_number' => $i],
+                fn(int $i) => ['filename' => "page-$i.png", 'url' => "https://example.com/page-$i.png", 'page_number' => $i, 'size' => 100],
                 range(1, 10),
             ));
 
         app(TranscodeFileService::class)->transcode(self::TRANSCODE_NAME, $storedFile);
 
-        // Simulate the batch still draining: only 2 of the 10 dispatched pages have actually
-        // persisted their row so far (the other 8 are still queued behind the concurrency
-        // semaphore). This mirrors the exact real-world state the bug hit.
-        $storedFile->transcodes()->create([
-            'transcode_name' => self::TRANSCODE_NAME,
-            'page_number'    => 1,
-            'filename'       => 'page-1.png',
-            'filepath'       => 'transcodes/page-1.png',
-        ]);
-        $storedFile->transcodes()->create([
-            'transcode_name' => self::TRANSCODE_NAME,
-            'page_number'    => 2,
-            'filename'       => 'page-2.png',
-            'filepath'       => 'transcodes/page-2.png',
-        ]);
-
-        // Second call: existing is non-empty (2 rows) but incomplete (8 "missing"). Without
-        // the in-flight lock this would dispatch RecoverTranscodePagesJob for those 8 pages
-        // -- a real duplicate render, since the FIRST batch is still legitimately in flight
-        // for all 10.
-        //
         // Cleared for realism (two genuinely separate processes each start with an empty
         // $acquiredLocks) but no longer load-bearing for this test's assertion: the lock
         // calls now use LockHelper::getDistributed(), which never reads or writes
@@ -79,6 +64,10 @@ class TranscodeFileServiceInFlightLockTest extends TestCase
         // that actually proves the same-process case (the one that was silently broken).
         LockHelper::$acquiredLocks = [];
 
+        // Second call, same StoredFile+transcodeName, well within the dispatch lock's TTL.
+        // All 10 rows already exist for real (the synchronous insert above), so this also
+        // exercises the "existing not empty, nothing missing" short-circuit -- either path
+        // must land on zero re-renders and zero duplicate recovery dispatches.
         app(TranscodeFileService::class)->transcode(self::TRANSCODE_NAME, $storedFile->fresh());
 
         Bus::assertNotDispatched(RecoverTranscodePagesJob::class);
