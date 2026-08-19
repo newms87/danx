@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Support;
 
+use Illuminate\Support\Facades\Storage;
 use Newms87\Danx\Exceptions\RateLimitExceededException;
 use Newms87\Danx\Support\ProcessFork;
 use Orchestra\Testbench\TestCase;
@@ -472,5 +473,68 @@ class ProcessForkTest extends TestCase
         $this->assertSame(RateLimitExceededException::class, $results[1]['error_class']);
         $this->assertSame(90, $results[1]['retry_after']);
         $this->assertSame(1001, $results[1]['error_code']);
+    }
+
+    /**
+     * DEC-10 (SG-193, 2026-08-19): purgeFilesystemDisks() must actually clear
+     * FilesystemManager's cached disk instances -- the same guarantee
+     * purgeAllRedisConnections() already provides for Redis. Proves the fix
+     * mechanism directly: resolving a disk, purging, then resolving again must
+     * yield a genuinely different object instance (the cache was cleared), not
+     * the same cached one.
+     */
+    public function test_purge_filesystem_disks_clears_the_cached_disk_instance(): void
+    {
+        $before = spl_object_id(Storage::disk('local'));
+
+        ProcessFork::purgeFilesystemDisks();
+
+        $after = spl_object_id(Storage::disk('local'));
+
+        $this->assertNotSame($before, $after, 'purgeFilesystemDisks() must force a fresh disk instance on next resolution');
+    }
+
+    /**
+     * End-to-end: many forked children, each doing a REAL write+read through a
+     * Filesystem disk resolved in the parent BEFORE forking (so every child
+     * would inherit a copy of that same already-open cached instance if
+     * purging didn't happen), must all succeed with their own correct content.
+     * Mirrors the existing DB-connection-isolation guarantee for Filesystem/S3
+     * clients -- the real defect this session traced (a fraction of forked
+     * children hitting League\Flysystem\UnableToReadFile under real fork
+     * concurrency, never reproducible outside it).
+     */
+    public function test_many_forked_children_each_get_a_working_isolated_filesystem_disk(): void
+    {
+        if (!function_exists('pcntl_fork')) {
+            $this->markTestSkipped('pcntl extension not available');
+        }
+
+        // Resolve (and warm) the disk in the parent BEFORE forking.
+        Storage::disk('local')->put('pfork-warm.txt', 'warm');
+
+        $tasks = [];
+        for ($i = 0; $i < 8; $i++) {
+            $tasks[] = function () use ($i) {
+                $path    = "pfork-child-$i.txt";
+                $content = "child-$i-content";
+                Storage::disk('local')->put($path, $content);
+
+                return Storage::disk('local')->get($path) === $content;
+            };
+        }
+
+        $results = ProcessFork::run($tasks);
+
+        $this->assertCount(8, $results);
+        foreach ($results as $index => $result) {
+            $this->assertSame('success', $result['status'], "Child $index failed: " . ($result['error'] ?? 'unknown'));
+            $this->assertTrue($result['result'], "Child $index's own write+read round-trip did not match — filesystem disk corruption under fork");
+        }
+
+        for ($i = 0; $i < 8; $i++) {
+            Storage::disk('local')->delete("pfork-child-$i.txt");
+        }
+        Storage::disk('local')->delete('pfork-warm.txt');
     }
 }

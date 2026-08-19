@@ -5,6 +5,7 @@ namespace Newms87\Danx\Support;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Redis;
+use Illuminate\Support\Facades\Storage;
 use Newms87\Danx\Audit\AuditDriver;
 use Newms87\Danx\Exceptions\ApiRequestException;
 use Newms87\Danx\Exceptions\RateLimitExceededException;
@@ -19,6 +20,9 @@ use Newms87\Danx\Traits\HasDebugLogging;
  *
  * Follows the same DB disconnect/reconnect pattern as Heartbeat:
  * DB::disconnect() before fork, DB::reconnect() in both parent and child.
+ * Redis and Filesystem/S3 clients get the same treatment (purgeAllRedisConnections(),
+ * purgeFilesystemDisks()) for the identical reason — any client caching an open
+ * socket must not survive a fork uncleared, or parent and child corrupt it together.
  *
  * Usage:
  *   $results = ProcessFork::run([
@@ -377,6 +381,7 @@ class ProcessFork
     {
         DB::disconnect();
         self::purgeAllRedisConnections();
+        self::purgeFilesystemDisks();
 
         $pid = pcntl_fork();
 
@@ -416,11 +421,12 @@ class ProcessFork
         });
         pcntl_async_signals(true);
 
-        // Fresh DB and Redis connections for this child (forked processes
-        // must not share sockets with the parent — causes corruption)
+        // Fresh DB, Redis, and Filesystem/S3 connections for this child (forked
+        // processes must not share sockets with the parent — causes corruption)
         DB::reconnect();
         self::purgeAllRedisConnections();
         Cache::forgetDriver();
+        self::purgeFilesystemDisks();
 
         // Create isolated audit request for this child process
         $childAuditRequestId = null;
@@ -464,6 +470,28 @@ class ProcessFork
         // Purge named connections from the manager's pool
         Redis::purge('default');
         Redis::purge('cache');
+    }
+
+    /**
+     * Forget all cached Filesystem disk instances (s3, local, etc.) before forking.
+     * Laravel's FilesystemManager caches a resolved disk client per name — for a remote
+     * disk (e.g. s3) that client wraps a Guzzle/cURL HTTP client with a persistent
+     * connection. A forked child inherits a COPY of any already-open client at fork
+     * time via pcntl_fork(); concurrent use of that same underlying socket by the
+     * parent and one or more forked children corrupts the connection, producing
+     * intermittent, hard-to-reproduce read/write failures under real fork concurrency
+     * (observed: League\Flysystem\UnableToReadFile on a small fraction of forked reads,
+     * never reproducible outside real fork concurrency). Same root cause DB::disconnect()
+     * and purgeAllRedisConnections() above already guard against — Filesystem was the
+     * one client type left unguarded.
+     */
+    public static function purgeFilesystemDisks(): void
+    {
+        $diskNames = array_keys(config('filesystems.disks', []));
+
+        if ($diskNames) {
+            Storage::forgetDisk($diskNames);
+        }
     }
 
     /**
