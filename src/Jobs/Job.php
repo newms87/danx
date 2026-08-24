@@ -374,9 +374,18 @@ abstract class Job implements ShouldQueue
         } catch (Throwable $exception) {
             $time = DateHelper::timerStr(static::class);
             static::logDebug("$prefix Failed   $jobName --- ($time)");
-            if ($jobBatch) {
-                $this->settleJobBatch($jobBatch, failed: true);
-            }
+
+            // Do NOT settle the JobBatch here. This catch runs on every failed attempt,
+            // not just the terminal one -- a retryable job ($tries > 1, or an
+            // infrastructure-level redelivery such as an SQS visibility-timeout requeue)
+            // reuses the SAME JobDispatch row across attempts (see __unserialize()
+            // resolving by find($id)), so settling on a non-terminal attempt here would
+            // double-settle if a later attempt succeeds: pending_jobs decremented twice,
+            // failed_jobs permanently overcounted for a job that ultimately succeeds, and
+            // on_complete potentially fired while the job was still mid-retry. Rethrowing
+            // lets Laravel's own retry/failed machinery decide whether this attempt was
+            // terminal -- only failed() (called by Laravel exactly once, when retries are
+            // exhausted or the job is explicitly failed) settles a genuine terminal failure.
             throw $exception;
         } finally {
             // Signal that this audit request is complete (Jobs run in app instances that do not terminate after every job)
@@ -388,17 +397,16 @@ abstract class Job implements ShouldQueue
     }
 
     /**
-     * Handle a job failure (called by Laravel when job fails/times out externally)
+     * Handle a job failure (called by Laravel exactly once, when the job's retries are
+     * exhausted or it is explicitly marked failed -- never on a non-terminal attempt).
      *
-     * Two failure paths converge here:
-     *   1. In-process exception that handle() already caught — dispatch status was set to
-     *      STATUS_EXCEPTION by executeJob's inner catch, and handle()'s catch arm already
-     *      settled the JobBatch counters. We must NOT double-settle.
-     *   2. External SIGTERM / worker timeout — handle()'s try/catch never ran, dispatch
-     *      status is still STATUS_RUNNING, and the JobBatch counters are NOT settled.
-     *      We must settle here or the batch's on_complete callback never fires.
-     *
-     * Distinguish via `$this->jobDispatch->status`: RUNNING ⇒ path 2, anything else ⇒ path 1.
+     * This is the SOLE place that settles a JobBatch member as failed. handle()'s own
+     * catch block intentionally does NOT settle (see the comment there): it runs on every
+     * failed attempt, including ones Laravel is about to retry, so settling from it would
+     * fire on_complete (and overcount failed_jobs) for jobs that go on to succeed on a
+     * later attempt. failed() is Laravel's own terminal-failure lifecycle hook -- called
+     * whether the job died from an in-process exception or an external SIGTERM/timeout --
+     * so it is always safe to settle unconditionally here.
      */
     public function failed(?Throwable $exception = null): void
     {
@@ -410,8 +418,7 @@ abstract class Job implements ShouldQueue
             'exception'    => $exception ? substr($exception->getMessage(), 0, 500) : null,
         ]);
 
-        $needsBatchSettlement = $this->jobDispatch?->jobBatch
-            && $this->jobDispatch->status === JobDispatch::STATUS_RUNNING;
+        $jobBatch = $this->jobDispatch?->jobBatch;
 
         if ($this->jobDispatch) {
             if ($this->jobDispatch->isTimedOut()) {
@@ -424,8 +431,8 @@ abstract class Job implements ShouldQueue
             }
         }
 
-        if ($needsBatchSettlement) {
-            $this->settleJobBatch($this->jobDispatch->jobBatch, failed: true);
+        if ($jobBatch) {
+            $this->settleJobBatch($jobBatch, failed: true);
         }
     }
 
