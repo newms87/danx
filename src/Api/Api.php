@@ -8,10 +8,14 @@ use GuzzleHttp\Exception\ConnectException;
 use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Exception\RequestException;
 use GuzzleHttp\HandlerStack;
+use GuzzleHttp\Psr7\Request as Psr7Request;
+use GuzzleHttp\Psr7\Response as Psr7Response;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Redis;
 use Newms87\Danx\Exceptions\ApiException;
 use Newms87\Danx\Exceptions\ApiRequestException;
+use Newms87\Danx\Exceptions\ApiTimeoutBackstopException;
 use Newms87\Danx\Exceptions\RateLimitExceededException;
 use Newms87\Danx\Helpers\ConsoleHelper;
 use Newms87\Danx\Helpers\DateHelper;
@@ -19,9 +23,11 @@ use Newms87\Danx\Helpers\FileHelper;
 use Newms87\Danx\Helpers\StringHelper;
 use Newms87\Danx\Models\Audit\ApiLog;
 use Newms87\Danx\Services\Error\RetryableErrorChecker;
+use Newms87\Danx\Support\ProcessFork;
 use Newms87\Danx\Traits\HasDebugLogging;
 use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
+use Throwable;
 
 /**
  * A generic implementation of an API
@@ -39,6 +45,30 @@ abstract class Api
 
     // Default request timeout in seconds. Can be overridden in extending classes.
     protected int $requestTimeout = 60;
+
+    // Extra seconds added on top of the resolved request timeout when arming the
+    // fork+SIGKILL hard backstop (see requestWithTimeoutBackstop()). Deliberately
+    // small and deliberately AFTER curl's own timeout — the backstop must only ever
+    // engage once curl's own mechanism has already had its chance to fire.
+    protected const int TIMEOUT_BACKSTOP_BUFFER_SECONDS = 5;
+
+    // Opt-in switch for the fork-based timeout backstop (see requestWithTimeoutBackstop()).
+    // Defaults OFF: forking every request has a real cost — fork()/DB reconnect/Redis+
+    // Filesystem purge overhead on the hot path, AND it silently breaks any caller-side
+    // Guzzle handler-stack middleware that mutates in-process PHP state (e.g. Guzzle's
+    // own Middleware::history() — the request now genuinely executes in a separate,
+    // disposable child process, so mutations to a PHP array/closure captured by
+    // reference in that child are invisible to the parent once the child exits; this is
+    // NOT a bug to work around, it's an unavoidable consequence of achieving a
+    // gracefully-catchable recovery from a hang in a language that cannot interrupt a
+    // blocking curl/stream read in-process — see requestWithTimeoutBackstop()'s docblock
+    // for the empirical proof). The real, repeated production hang this backstop exists
+    // to fix has been observed EXCLUSIVELY on OpenAI's /v1/responses endpoint (54
+    // incidents, 0 occurrences on any other service this app calls) — so rather than
+    // pay that cost universally for every API integration (S3, ConvertAPI, Mistral,
+    // danxbot, ...), only the specific Api subclass(es) that have actually exhibited the
+    // hang opt in by overriding this to true (see OpenAiApi).
+    protected bool $timeoutBackstopEnabled = false;
 
     // Per-request timeout override. Set via setNextTimeout(), reset after each request.
     protected ?int $nextRequestTimeout = null;
@@ -631,6 +661,358 @@ LUA;
     }
 
     /**
+     * Hard backstop against a hung outbound HTTP request that curl's own client-side
+     * timeout (Guzzle's 'timeout' option, wired down to CURLOPT_TIMEOUT_MS) has, for
+     * reasons not fully understood, occasionally failed to enforce — observed as a
+     * silent, indefinite hang with zero response bytes and zero exception on real
+     * outbound OpenAI calls in production. This is NOT a replacement for curl's own
+     * timeout (still configured normally by the caller via $requestOptions['timeout']
+     * below) — it is an independent safety net that only ever engages once curl's own
+     * mechanism has already failed to do its job (armed for $timeoutSeconds + a small
+     * buffer, always AFTER curl's own deadline).
+     *
+     * ## Why this is fork-based, not pcntl_alarm()-based (real, empirically-verified finding)
+     *
+     * The original design for this method was an in-process pcntl_alarm() + SIGALRM
+     * handler that would throw ApiTimeoutBackstopException directly from the signal
+     * handler. That does NOT work — verified empirically with three isolated
+     * reproductions before this design was chosen:
+     *
+     *  1. pcntl_alarm()+pcntl_signal(SIGALRM,...) DOES correctly interrupt a plain
+     *     PHP sleep() at the expected time (confirmed: fires at exactly the armed
+     *     duration).
+     *  2. The SAME mechanism does NOT interrupt a blocking Guzzle/curl request that
+     *     has genuinely hung (Guzzle 'timeout' => 0 against a real TCP server that
+     *     accepts the connection and never sends a byte back) — the registered
+     *     SIGALRM handler is simply never invoked; the process hangs past the armed
+     *     duration indefinitely.
+     *  3. The SAME mechanism does NOT interrupt a blocking raw PHP fread() on a
+     *     socket either (no curl/Guzzle involved at all) — ruling out "a curl-
+     *     specific quirk" as the explanation.
+     *
+     * The consistent explanation across all three: PHP's async-signal dispatch only
+     * invokes the registered userland callback once execution returns to the Zend
+     * VM. sleep() is a PHP built-in that cooperatively checks for pending signals;
+     * fread()/curl's internal poll-and-retry-on-EINTR loops are C-level code that
+     * never hands control back to the VM while genuinely blocked — so the signal is
+     * delivered at the OS level but the PHP-level handler that would throw our
+     * exception is never actually reached. This is a real limitation of PHP's pcntl
+     * extension against blocking stream/curl I/O, not a bug in a specific
+     * implementation attempt.
+     *
+     * The one mechanism verified to actually work against a genuinely-hung blocking
+     * call: an EXTERNAL process sending SIGKILL, which the kernel enforces
+     * unconditionally regardless of what the target is blocked in (also verified
+     * empirically: a forked watchdog sleeping 3s then SIGKILLing its parent
+     * successfully terminated a parent hung in the exact same blocking Guzzle call
+     * that the in-process alarm could not interrupt). This method therefore forks
+     * the ACTUAL HTTP request into a child process and has the PARENT act as the
+     * watchdog via a cooperative poll loop (pcntl_waitpid(WNOHANG) + usleep()) — the
+     * parent is never itself blocked in curl, so it stays fully responsive and can
+     * SIGKILL the child and throw a normal, catchable, loggable PHP exception the
+     * instant the deadline is exceeded.
+     *
+     * ## Mechanics
+     *
+     * Follows the same fork hygiene ProcessFork::forkChild()/executeInChild()
+     * establishes and documents in depth (DB::disconnect() before fork,
+     * DB::reconnect() in both parent and child, Redis/Filesystem client purge before
+     * fork) — a forked child inherits copies of the parent's open sockets, and
+     * concurrent use of the same underlying connection by parent and child corrupts
+     * it. The actual Guzzle Response (and any caught RequestException/ConnectException)
+     * cannot cross the fork boundary as live objects — both wrap PSR-7 stream
+     * resources, which do not survive serialize()/unserialize() (verified: a bare
+     * resource becomes an unusable int). The child therefore flattens the outcome to
+     * plain, serializable data (status/headers/body strings, or an exception
+     * class+message+optional response) written to a temp file; the parent
+     * reconstructs an equivalent Response — or re-throws an equivalent
+     * RequestException/ConnectException via Guzzle's own factory, so the EXISTING
+     * catch (RequestException|ConnectException) block in call() classifies/retries
+     * it exactly as if no fork had happened — from that data.
+     *
+     * $this->currentApiLog is instance state set by handleRequest()/handleResponse()
+     * (fired synchronously inside the Guzzle handler stack during $client->request())
+     * — since the child gets its own COPY of $this on fork, the child's ApiLog write
+     * is invisible to the parent's copy of $this unless explicitly propagated. The
+     * child passes back its created ApiLog's id; the parent re-fetches it onto its
+     * own $this->currentApiLog so callers (LlmService, AgentThreadService — both call
+     * Api::getCurrentApiLog() after the request completes) see the real row.
+     *
+     * ## Skipped entirely inside an active DB transaction (empirically required)
+     *
+     * DB::disconnect() on EITHER side of the fork is not merely a local, per-process
+     * file-descriptor close — it sends the database server a real protocol-level
+     * termination for that (shared, until reconnect) session. An earlier attempt at
+     * this method tried disconnecting ONLY in the child (to leave a parent-side
+     * active transaction untouched) on the theory that POSIX's per-process file
+     * descriptor tables would isolate the two sides; that theory was wrong in
+     * practice — the child's reconnect tore down the connection for the PARENT too
+     * ("server closed the connection unexpectedly" / "no connection to the server"
+     * on the parent's very next query, reproduced against a real RefreshDatabase-
+     * wrapped test). There is therefore no way to fork safely while a transaction
+     * the caller still needs is open — this method checks DB::transactionLevel() and
+     * falls back to a direct, unforked request (today's pre-backstop behavior) when
+     * one is active, rather than risk corrupting it.
+     */
+    protected function requestWithTimeoutBackstop(Client $client, string $type, string $url, array $requestOptions, int $timeoutSeconds): ResponseInterface
+    {
+        if (!$this->timeoutBackstopEnabled) {
+            // Not opted in (the default for every Api subclass) — behave exactly as
+            // before this backstop existed: a plain, direct, unforked request. See
+            // $timeoutBackstopEnabled's docblock for why this is opt-in, not universal.
+            return $client->request($type, $url, $requestOptions);
+        }
+
+        if (!function_exists('pcntl_fork') || !function_exists('posix_kill')) {
+            // pcntl/posix not available on this platform/build (e.g. local Windows
+            // dev, or a PHP build without these extensions) — fall back to relying
+            // solely on curl's own configured timeout, exactly as before this
+            // backstop existed. Never fatal, never blocks non-Linux dev environments.
+            return $client->request($type, $url, $requestOptions);
+        }
+
+        if (DB::transactionLevel() > 0) {
+            // Forking while inside an ACTIVE DB transaction is unsafe and must be
+            // skipped — empirically verified (not theorized): a real DB-level
+            // disconnect on either side of the fork (needed so the child can safely
+            // get its OWN connection for its ApiLog writes) sends the database
+            // server a genuine protocol-level termination for that shared session,
+            // not just a local file-descriptor close — the OTHER side then fails
+            // with "server closed the connection unexpectedly" / "no connection to
+            // the server" on its very next query, because the session is gone
+            // SERVER-SIDE, not just locally. An attempted fix that instead left the
+            // parent's connection untouched and disconnected only in the child hit
+            // this exact failure. This app's own standing rule already forbids
+            // DB::transaction() in application code (see CLAUDE.md — rollback
+            // deletes AuditRequest rows), so a transaction here is virtually always
+            // a TEST harness's wrapper (e.g. RefreshDatabase) rather than production
+            // traffic — falling back to a direct, unforked request preserves the
+            // caller's transaction untouched at the cost of this one call not
+            // having the backstop's protection, which matches this method's
+            // pre-existing behavior before the backstop existed at all.
+            return $client->request($type, $url, $requestOptions);
+        }
+
+        $backstopSeconds = max(1, $timeoutSeconds + self::TIMEOUT_BACKSTOP_BUFFER_SECONDS);
+        $tempFile         = tempnam(sys_get_temp_dir(), 'api_backstop_');
+
+        // Matches ProcessFork::forkChild()'s own established pattern exactly (disconnect
+        // BEFORE forking, reconnect independently in BOTH parent and child afterward) —
+        // see ProcessFork's class docblock for the full rationale. Forked processes
+        // share the same underlying DB session/socket until one side reconnects; the
+        // DB::transactionLevel() guard above is what makes this safe to do unconditionally
+        // here (no active transaction survives a reconnect either side of the fork).
+        DB::disconnect();
+        ProcessFork::purgeAllRedisConnections();
+        ProcessFork::purgeFilesystemDisks();
+
+        $pid = pcntl_fork();
+
+        if ($pid === -1) {
+            DB::reconnect();
+            @unlink($tempFile);
+            static::logWarning('pcntl_fork() failed while arming the timeout backstop — proceeding without it for this request');
+
+            return $client->request($type, $url, $requestOptions);
+        }
+
+        if ($pid === 0) {
+            // === CHILD: perform the actual request, flatten the outcome to plain
+            // data, write it to the temp file, always exit(0) — never return to
+            // the caller's code path.
+            $this->executeBackstopChildRequest($client, $type, $url, $requestOptions, $tempFile);
+            exit(0);
+        }
+
+        // === PARENT: never itself blocked in curl — free to poll and enforce the
+        // deadline in real time.
+        DB::reconnect();
+
+        $status  = 0;
+        $exited  = false;
+        $deadlineAt = microtime(true) + $backstopSeconds;
+
+        while (microtime(true) < $deadlineAt) {
+            $waitResult = pcntl_waitpid($pid, $status, WNOHANG);
+
+            if ($waitResult === $pid) {
+                $exited = true;
+                break;
+            }
+
+            usleep(50_000);
+        }
+
+        if (!$exited) {
+            // Deadline exceeded and the child is STILL alive — this is the hang
+            // this backstop exists to catch. SIGKILL cannot be caught, blocked, or
+            // restarted by anything the child might be stuck in.
+            posix_kill($pid, SIGKILL);
+            pcntl_waitpid($pid, $status);
+            @unlink($tempFile);
+
+            throw new ApiTimeoutBackstopException($this->getServiceName(), $type, $url, $backstopSeconds);
+        }
+
+        $outcome = $this->readBackstopChildOutcome($tempFile);
+
+        if ($outcome === null) {
+            // Child exited (possibly abnormally) but produced no readable result —
+            // treat as an interrupted/failed attempt rather than silently
+            // proceeding with nothing. Same failure family as a genuine hang.
+            throw new ApiTimeoutBackstopException($this->getServiceName(), $type, $url, $backstopSeconds);
+        }
+
+        if ($outcome['api_log_id']) {
+            $this->currentApiLog = ApiLog::find($outcome['api_log_id']);
+        }
+
+        if ($outcome['ok']) {
+            $r = $outcome['response'];
+
+            return new Psr7Response($r['status'], $r['headers'], $r['body'], $r['protocol'], $r['reason']);
+        }
+
+        throw $this->reconstructBackstopChildException($outcome['exception'], $type, $url);
+    }
+
+    /**
+     * Runs INSIDE the forked child (see requestWithTimeoutBackstop()). Performs the
+     * real Guzzle request, then flattens whatever happened (success or a Guzzle
+     * exception) to plain serializable data written to $tempFile — Response/
+     * RequestException/ConnectException objects wrap PSR-7 stream resources that do
+     * not survive serialize() across the fork boundary.
+     */
+    protected function executeBackstopChildRequest(Client $client, string $type, string $url, array $requestOptions, string $tempFile): void
+    {
+        // Fresh DB/Redis/Filesystem connections for this child — same reasoning as
+        // ProcessFork::executeInChild(). handleRequest()/handleResponse() write
+        // ApiLog rows via the DB during $client->request() below, so this child
+        // needs a working (non-corrupted, non-shared-with-parent) connection.
+        DB::reconnect();
+        ProcessFork::purgeAllRedisConnections();
+        ProcessFork::purgeFilesystemDisks();
+
+        try {
+            $response = $client->request($type, $url, $requestOptions);
+
+            $data = [
+                'ok'         => true,
+                'api_log_id' => $this->currentApiLog?->id,
+                'response'   => [
+                    'status'   => $response->getStatusCode(),
+                    'reason'   => $response->getReasonPhrase(),
+                    'headers'  => $response->getHeaders(),
+                    'body'     => (string)$response->getBody(),
+                    'protocol' => $response->getProtocolVersion(),
+                ],
+                'exception'  => null,
+            ];
+        } catch (RequestException|ConnectException $exception) {
+            $response = $exception instanceof RequestException ? $exception->getResponse() : null;
+
+            $data = [
+                'ok'         => false,
+                'api_log_id' => $this->currentApiLog?->id,
+                'response'   => null,
+                'exception'  => [
+                    'class'    => get_class($exception),
+                    'message'  => $exception->getMessage(),
+                    'response' => $response ? [
+                        'status'  => $response->getStatusCode(),
+                        'reason'  => $response->getReasonPhrase(),
+                        'headers' => $response->getHeaders(),
+                        'body'    => (string)$response->getBody(),
+                    ] : null,
+                ],
+            ];
+        } catch (Throwable $exception) {
+            // Anything outside Guzzle's own exception hierarchy — preserve the real
+            // class/message rather than silently losing it, but still surface it
+            // through the SAME RequestException reconstruction path in the parent
+            // (see reconstructBackstopChildException()) so call()'s existing catch
+            // block handles it uniformly.
+            $data = [
+                'ok'         => false,
+                'api_log_id' => $this->currentApiLog?->id,
+                'response'   => null,
+                'exception'  => [
+                    'class'    => get_class($exception),
+                    'message'  => get_class($exception) . ': ' . $exception->getMessage(),
+                    'response' => null,
+                ],
+            ];
+        }
+
+        $written = @file_put_contents($tempFile, serialize($data));
+
+        if ($written === false) {
+            // Nothing more we can do from inside the child — the parent's own
+            // "no readable result" fallback (readBackstopChildOutcome() returning
+            // null) covers this.
+            exit(1);
+        }
+    }
+
+    /**
+     * Reads and unserializes the child's flattened outcome from requestWithTimeoutBackstop().
+     * Returns null on any missing/corrupt/unreadable result — the caller treats that
+     * the same as a hang rather than silently proceeding with nothing.
+     */
+    protected function readBackstopChildOutcome(string $tempFile): ?array
+    {
+        if (!file_exists($tempFile) || filesize($tempFile) === 0) {
+            @unlink($tempFile);
+
+            return null;
+        }
+
+        $serialized = file_get_contents($tempFile);
+        @unlink($tempFile);
+
+        $data = @unserialize($serialized);
+
+        if (!is_array($data) || !array_key_exists('ok', $data)) {
+            return null;
+        }
+
+        return $data;
+    }
+
+    /**
+     * Reconstructs a real RequestException/ConnectException from the child's
+     * flattened exception data, so call()'s EXISTING catch (RequestException|
+     * ConnectException) block classifies/retries it exactly as if the request had
+     * run in-process (unchanged isTimeoutException() regex match on the preserved
+     * original message, unchanged 429/5xx/4xx handling via the reconstructed
+     * response). Uses Guzzle's own RequestException::create() factory when a
+     * response is present so the correct subtype (ClientException/ServerException)
+     * is derived exactly as Guzzle itself would.
+     */
+    protected function reconstructBackstopChildException(array $exceptionData, string $type, string $url): RequestException|ConnectException
+    {
+        $request = new Psr7Request($type, $url);
+
+        if ($exceptionData['response']) {
+            $r        = $exceptionData['response'];
+            $response = new Psr7Response($r['status'], $r['headers'], $r['body'], reason: $r['reason']);
+
+            // RequestException::create() derives its own message from the response
+            // status/reason (matching real Guzzle behavior for a response-bearing
+            // failure exactly) rather than accepting a custom one — the ORIGINAL
+            // child-side message is only load-bearing for the no-response branch
+            // below, where isTimeoutException()'s regex needs the real wording.
+            return RequestException::create($request, $response);
+        }
+
+        if (is_a($exceptionData['class'], ConnectException::class, true)) {
+            return new ConnectException($exceptionData['message'], $request);
+        }
+
+        return new RequestException($exceptionData['message'], $request);
+    }
+
+    /**
      * Make a request to the endpoint with automatic retry for transient failures.
      *
      * Retry behavior is controlled by:
@@ -714,7 +1096,7 @@ LUA;
                 $retryInfo = $maxRetries > 0 ? " attempt={$attempt}/" . ($maxRetries + 1) : '';
                 static::logDebug("Request started: {$type} {$url} timeout={$timeout}s (from {$timeoutSource}){$retryInfo}");
 
-                $this->response = $client->request($type, $url, $requestOptions);
+                $this->response = $this->requestWithTimeoutBackstop($client, $type, $url, $requestOptions, $timeout);
 
                 // Log successful completion with timing and size
                 $elapsedMs = (int)round((microtime(true) - $startTime) * 1000);
@@ -723,6 +1105,37 @@ LUA;
                 static::logDebug('Response (' . FileHelper::getHumanSize($size) . ' in ' . DateHelper::formatDuration($elapsedMs) . "): {$type} " . $this->response->getStatusCode() . " {$url}");
 
                 return $this;
+            } catch (ApiTimeoutBackstopException $exception) {
+                $elapsed = round(microtime(true) - $startTime, 3);
+
+                // Deliberately NOT retried within this same call() invocation — by
+                // definition this exception only fires after the FULL configured
+                // timeout (+ buffer) already elapsed once, so an API-level retry loop
+                // would burn another full timeout duration per attempt, compounding
+                // delay exactly backwards from the point of tightening timeouts in
+                // the first place. Same reasoning RetryableJobExceptionService
+                // documents for cURL-error-28 timeouts: retried at the JOB level
+                // (a fresh attempt, backed off, observable) not the API level.
+                $errorType     = 'timeout_backstop';
+                $lastException = $exception;
+
+                $retryInfo = $maxRetries > 0 ? " attempt={$attempt}/" . ($maxRetries + 1) : '';
+                static::logError(
+                    "Request FORCE-INTERRUPTED by fork+SIGKILL timeout backstop: {$type} {$url} elapsed={$elapsed}s " .
+                    "configured_timeout={$timeout}s (from {$timeoutSource}){$retryInfo} — curl's own timeout did not fire; " .
+                    'this call is now failing loudly instead of hanging indefinitely.',
+                    ['exception' => $exception]
+                );
+
+                if ($this->currentApiLog) {
+                    ApiLog::logResponseError($this->currentApiLog, $exception, $errorType);
+                }
+
+                // Not retryable at the API level (see reasoning above) — always break
+                // out of the retry loop and let the exception propagate to the caller,
+                // where job-level retry classification (RetryableJobExceptionService)
+                // takes over.
+                break;
             } catch (RequestException|ConnectException $exception) {
                 $elapsed   = round(microtime(true) - $startTime, 3);
                 $isTimeout = $this->isTimeoutException($exception);

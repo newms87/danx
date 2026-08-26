@@ -443,9 +443,25 @@ class ProcessFork
             $data = self::errorResultFromThrowable($e, $childAuditRequestId);
         }
 
-        // Finalize the child audit request (record execution time)
+        // Finalize the child audit request (record execution time). This MUST NOT let
+        // an exception escape the fork boundary: pcntl_fork() duplicates the entire PHP
+        // call stack at the fork point, so an uncaught exception here propagates up
+        // through whatever ancestor try/catch frames happen to still be present on the
+        // child's inherited stack — e.g. the caller's own top-level catch, from before
+        // the fork ever happened. That ancestor frame then handles a finalize-write
+        // failure as if it were the task's own failure, using the CHILD's forked DB
+        // connection to write real state the parent never intended (confirmed
+        // incident: TW-1192/TW-1179, 2026-08-25 — a Postgres connection-exhaustion
+        // error inside this exact update() call escaped here, was caught by
+        // TaskWorkerService::run()'s pre-fork catch block, and permanently failed both
+        // TaskWorkers even though $task() above had already completed without error).
+        // $data (from $task()) is already captured above and is preserved regardless.
         if ($childAuditRequestId) {
-            AuditDriver::terminate();
+            try {
+                AuditDriver::terminate();
+            } catch (\Throwable $e) {
+                self::logWarning('AuditDriver::terminate() failed inside ProcessFork child — task result already captured, finalize write dropped', ['exception' => $e]);
+            }
         }
 
         // Write serialized result to temp file — exit non-zero on failure so parent detects it
