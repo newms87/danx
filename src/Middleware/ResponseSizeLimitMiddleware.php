@@ -60,7 +60,11 @@ class ResponseSizeLimitMiddleware
 
 		$disk = Storage::disk(config('danx.response_size_limit.disk'));
 		$path = "lambda-responses/$auditRequest->id.txt";
-		$disk->put($path, $content, 'public');
+		// No ACL/visibility argument: a bucket with Object Ownership set to "Bucket owner
+		// enforced" (ACLs disabled -- AWS's recommended default since 2023) rejects ANY ACL
+		// header with AccessControlListNotSupported, even 'private'. Public read is expected
+		// to come from a bucket policy on this disk instead of an object-level ACL.
+		$disk->put($path, $content);
 		$s3Url = $disk->url($path);
 
 		return Redirect::away(self::rewriteCdnUrl($s3Url), 303, $response->headers->all());
