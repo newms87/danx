@@ -7,7 +7,10 @@ use GuzzleHttp\Client;
 use GuzzleHttp\Exception\ConnectException;
 use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Exception\RequestException;
+use GuzzleHttp\Handler\CurlMultiHandler;
 use GuzzleHttp\HandlerStack;
+use GuzzleHttp\Promise\PromiseInterface;
+use GuzzleHttp\Promise\Utils as PromiseUtils;
 use GuzzleHttp\Psr7\Request as Psr7Request;
 use GuzzleHttp\Psr7\Response as Psr7Response;
 use Illuminate\Support\Collection;
@@ -78,6 +81,52 @@ abstract class Api
 
     // Per-request retry count override. Set via retryCount(), reset after each request.
     protected ?int $nextRetryCount = null;
+
+    // Per-request soft-timeout override. Set via setNextSoftTimeout(), consumed (read
+    // + reset to null) at the very top of call(). Null (the default) means hedging is
+    // disabled entirely — call() runs through executeCall() exactly as it did before
+    // this feature existed. Non-null routes call() into callWithHedging() instead. See
+    // callWithHedging()'s docblock for the full hedging mechanism.
+    protected ?int $nextSoftTimeout = null;
+
+    // Test-only seam: overrides the base Guzzle handler used when building hedge
+    // attempts' async clients (see buildHedgeClient()). Unlike setOverrideClient() —
+    // which replaces the ENTIRE Guzzle client, logging middleware included — this
+    // handler still gets wrapped with the SAME handleRequest()/handleResponse()
+    // middleware production hedging uses, so a test using this seam gets real ApiLog
+    // rows (parent_api_log_id/attempt_number/is_hedge_winner included) exactly like
+    // production, instead of silently bypassing ApiLog entirely the way
+    // setOverrideClient() would for the hedging path.
+    protected $overrideBaseHandler;
+
+    // Hard cap on total attempts fired for one hedged call() invocation (1 initial +
+    // up to 2 hedges). Never raise without also reconsidering ApiLog.attempt_number's
+    // smallint range and the real cost multiplier this implies on the provider side.
+    protected const int HEDGE_MAX_ATTEMPTS = 3;
+
+    // After a winner is decided, how much additional bounded tick budget (in seconds)
+    // is spent trying to let still-in-flight losers reach a real terminal state, so
+    // their ApiLog row can be confidently marked is_hedge_winner=false instead of
+    // being left ambiguous at null. Deliberately small relative to the soft timeout
+    // itself — the entire point of hedging is to stop waiting on a slow attempt, so
+    // this grace window must never approach the soft timeout duration or it defeats
+    // hedging's own latency goal. 3s covers the common case of "the loser was actually
+    // about to finish anyway" without materially extending the caller's total wait.
+    protected const int HEDGE_LOSER_GRACE_SECONDS = 3;
+
+    /**
+     * Wall-clock source for hedging's scheduling decisions (soft-timeout thresholds,
+     * retry-after delays, the loser grace window). Real microtime(true) in every
+     * production call — this indirection exists purely so a test can substitute a
+     * deterministic, controllable clock via a protected override instead of
+     * depending on real elapsed wall-clock time racing against real sleep-driven tick
+     * loops, which would otherwise make hedge-firing-threshold tests inherently
+     * flaky. Never used by executeCall() or any pre-existing method.
+     */
+    protected function hedgeClockNow(): float
+    {
+        return microtime(true);
+    }
 
     const string
         METHOD_DELETE  = 'DELETE',
@@ -612,6 +661,30 @@ LUA;
     }
 
     /**
+     * Arm hedged-request mode for the next request only. When set, call() fires a
+     * duplicate request if the first hasn't returned within $seconds, races them, and
+     * uses whichever completes first — see callWithHedging() for the full mechanism.
+     * One-shot: consumed (read + reset to null) at the very top of call().
+     */
+    public function setNextSoftTimeout(int $seconds): static
+    {
+        $this->nextSoftTimeout = $seconds;
+
+        return $this;
+    }
+
+    /**
+     * Test-only seam — see $overrideBaseHandler's docblock for why this exists instead
+     * of reusing setOverrideClient() for hedging tests.
+     */
+    public function setOverrideBaseHandler(?callable $handler): static
+    {
+        $this->overrideBaseHandler = $handler;
+
+        return $this;
+    }
+
+    /**
      * Set the retry count for the next request only.
      * This overrides the default retryCount for one request, then resets.
      */
@@ -1020,12 +1093,40 @@ LUA;
      * - config('danx.errors.api_retry_delay_ms') - delay between retries
      * - config('danx.errors.api_retryable_checker') - service to determine if error is retryable
      *
+     * Hedging: when setNextSoftTimeout() was called before this request, control
+     * branches into callWithHedging() instead — see that method's docblock. When no
+     * soft timeout is set (the default, for every caller that never calls
+     * setNextSoftTimeout()), this method does nothing but delegate to executeCall(),
+     * which is this method's ENTIRE pre-hedging implementation, unchanged.
+     *
      * @throws ApiException
      * @throws ApiRequestException
      * @throws GuzzleException
      * @throws Exception
      */
     public function call(string $type, string $endpoint, $body = '', array $options = []): static
+    {
+        $softTimeout            = $this->nextSoftTimeout;
+        $this->nextSoftTimeout = null;
+
+        if ($softTimeout === null) {
+            return $this->executeCall($type, $endpoint, $body, $options);
+        }
+
+        return $this->callWithHedging($type, $endpoint, $body, $options, $softTimeout);
+    }
+
+    /**
+     * The non-hedged request implementation — byte-for-byte call()'s ENTIRE body
+     * before hedging existed. Every caller that never calls setNextSoftTimeout() is
+     * provably unaffected by the hedging feature because this method is untouched.
+     *
+     * @throws ApiException
+     * @throws ApiRequestException
+     * @throws GuzzleException
+     * @throws Exception
+     */
+    protected function executeCall(string $type, string $endpoint, $body = '', array $options = []): static
     {
         if (!is_string($body)) {
             $jsonBody = StringHelper::safeJsonEncode($body);
@@ -1209,6 +1310,613 @@ LUA;
         }
 
         throw $lastException;
+    }
+
+    /**
+     * Hedged-request implementation (SG-hedging feature). Fires attempt 1 immediately;
+     * if it hasn't settled by $softTimeoutSeconds, fires attempt 2 without cancelling
+     * attempt 1; if NEITHER has settled by 2x $softTimeoutSeconds, fires attempt 3
+     * (HEDGE_MAX_ATTEMPTS caps the total at 3). Races every in-flight attempt and
+     * returns as soon as ANY one succeeds. Losing attempts are never cancelled — they
+     * are given a small bounded grace window (HEDGE_LOSER_GRACE_SECONDS) to reach a
+     * real terminal state (so their ApiLog row can be marked is_hedge_winner=false
+     * instead of left ambiguous), then discarded regardless of whether they finished.
+     *
+     * ## Why this can't reuse Utils::any()/Utils::some()->wait()
+     *
+     * Verified against this repo's actual vendored guzzlehttp/promises source:
+     * Promise::invokeWaitList() (the wait function every aggregate promise from
+     * Utils::any()/some() is built on) walks EVERY promise in its derivation chain in
+     * declaration order and calls waitIfPending() on each unconditionally, even after
+     * the aggregate has already resolved. If a later entry in that chain is still
+     * genuinely pending, blocking on THAT entry's own wait function stalls the caller
+     * past the point the race was actually decided — exactly the head-of-line problem
+     * hedging exists to avoid. Instead, each attempt is fired via requestAsync() and
+     * driven forward by repeatedly calling ITS OWN transport's tick() (see
+     * tickHedgeTransport()) — real production traffic ticks a genuine
+     * GuzzleHttp\Handler\CurlMultiHandler; hedging tests may substitute
+     * setOverrideBaseHandler() with a test double, which is ticked the same way.
+     *
+     * ## Why every attempt gets its own cloned Api instance
+     *
+     * $this->currentApiLog (and $this->response, and the lazily-built $this->client)
+     * are single-instance mutable state written by handleRequest()/handleResponse() —
+     * sharing one Api instance across concurrent in-flight attempts would race those
+     * writes. Each attempt instead runs against `clone $this` (see fireHedgeAttempt()),
+     * which — unlike resolving a fresh instance via the container — naturally carries
+     * over already-configured instance state (baseApiUrl overrides, prefixUri, a
+     * test's setOverrideBaseHandler()) while still guaranteeing independent mutable
+     * per-attempt state, since clone gives every attempt its own copy of every
+     * property and the request-scoped ones are explicitly reset immediately after.
+     * $timeoutBackstopEnabled is forced off on every hedge attempt clone: the fork+
+     * SIGKILL backstop (OpenAiApi only) would duplicate a sibling hedge attempt's live
+     * socket into its forked child if both fired concurrently — the soft timeout
+     * itself already provides earlier, cheaper hang mitigation for hedge-eligible
+     * calls, making the backstop redundant here even where it's otherwise opted in.
+     *
+     * ## Retry-on-transient-failure within one hedge attempt
+     *
+     * getEffectiveRetryCount()/getRetryDelayMs()/RetryableErrorChecker::isApiRetryable()/
+     * resolveRateLimitBlockSeconds()/registerServiceBlock() — the SAME decision logic
+     * executeCall()'s retry loop uses — are reused unchanged (see
+     * handleHedgeAttemptFailure()). Only the CONTROL FLOW differs: executeCall()'s
+     * blocking while-loop-with-usleep() cannot be reused verbatim inside a hedge
+     * attempt without blocking sibling attempts, so a retry is instead scheduled as a
+     * non-blocking "retryAt" timestamp serviced by the same tick loop driving every
+     * other attempt (see tickHedgeAttempt()). throttle() is called exactly once per
+     * fired hedge attempt (fireHedgeAttempt()), never per internal retry — matching
+     * executeCall(), where throttle() is called once per call() invocation, outside
+     * its own retry loop.
+     */
+    protected function callWithHedging(string $type, string $endpoint, $body = '', array $options = [], int $softTimeoutSeconds = 0): static
+    {
+        $plan      = $this->buildRequestPlan($type, $endpoint, $body, $options);
+        $startedAt = $this->hedgeClockNow();
+
+        $attempts             = [$this->fireHedgeAttempt($plan, 1, null, $startedAt)];
+        $firedCount           = 1;
+        $nextAttemptDeadline  = $startedAt + $softTimeoutSeconds;
+        $fireFailures         = [];
+
+        while (true) {
+            foreach ($attempts as $index => $attempt) {
+                if (!$attempt['done']) {
+                    $attempts[$index] = $this->tickHedgeAttempt($attempt, $plan);
+                }
+            }
+
+            $winnerIndex = $this->findHedgeWinnerIndex($attempts);
+
+            if ($winnerIndex !== null) {
+                $winner = $attempts[$winnerIndex];
+                unset($attempts[$winnerIndex]);
+
+                $this->finalizeLosingHedgeAttempts($attempts);
+
+                return $this->applyHedgeWinner($winner);
+            }
+
+            $allFailedSoFar = $this->allHedgeAttemptsFailed($attempts);
+
+            if ($allFailedSoFar && $firedCount >= self::HEDGE_MAX_ATTEMPTS) {
+                throw $this->buildHedgeFailureException($attempts, $fireFailures);
+            }
+
+            $now = $this->hedgeClockNow();
+
+            // Fire the next hedge attempt at its scheduled soft-timeout threshold —
+            // OR immediately (without waiting for the threshold) if every attempt
+            // fired so far has already permanently failed, since there is no reason
+            // to keep waiting on a schedule built around "still might come back".
+            if ($firedCount < self::HEDGE_MAX_ATTEMPTS && ($now >= $nextAttemptDeadline || $allFailedSoFar)) {
+                $firedCount++;
+                $parentApiLogId = end($attempts)['apiLogId'] ?? null;
+
+                try {
+                    $attempts[] = $this->fireHedgeAttempt($plan, $firedCount, $parentApiLogId, $startedAt);
+                } catch (Throwable $exception) {
+                    $fireFailures[] = $exception;
+                    static::logWarning("Hedge attempt {$firedCount} failed to fire: " . StringHelper::logSafeString($exception->getMessage()));
+                }
+
+                $nextAttemptDeadline = $startedAt + ($firedCount * $softTimeoutSeconds);
+            }
+
+            usleep(20_000);
+        }
+    }
+
+    /**
+     * Builds the (URL, request options, timeout, retry budget) plan shared identically
+     * by every hedge attempt — computed ONCE from $this (the orchestrating instance)
+     * before any attempt fires, so all attempts are genuinely duplicate requests. This
+     * necessarily duplicates URL/query/header/timeout-resolution logic already present
+     * in executeCall() — that duplication is deliberate: executeCall() must remain
+     * byte-for-byte unchanged (see its own docblock), so it cannot be refactored to
+     * share this helper without altering the no-hedging code path a diff reviewer
+     * needs to see as untouched.
+     */
+    protected function buildRequestPlan(string $type, string $endpoint, $body, array $options): array
+    {
+        if (!is_string($body)) {
+            $jsonBody = StringHelper::safeJsonEncode($body);
+
+            if ($body && !$jsonBody) {
+                throw new ApiException("Failed to encode body to JSON\n\n" . serialize($body));
+            }
+
+            $body = $jsonBody;
+        }
+
+        $queryParams        = $this->queryParams;
+        $this->queryParams = [];
+
+        $timeout                   = $this->nextRequestTimeout ?? $this->requestTimeout;
+        $this->nextRequestTimeout = null;
+
+        $maxRetries            = $this->getEffectiveRetryCount();
+        $this->nextRetryCount = null;
+
+        if ($this->debug) {
+            $options['debug'] = true;
+        }
+
+        $options['timeout'] = $options['timeout'] ?? $timeout;
+        $options['headers'] = ($options['headers'] ?? []) + $this->getRequestHeaders();
+
+        $baseUrl = $this->baseApiUrl ?: $this->getBaseApiUrl();
+        $url     = rtrim($baseUrl, '/') . '/' . (!empty($this->prefixUri) ? rtrim($this->prefixUri, '/') . '/' : '') . $endpoint;
+
+        $queryParams = $this->mergeQueryParamsFromUrl($url, $queryParams);
+
+        $requestOptions = $options + [
+            'query' => $queryParams,
+            'body'  => $body,
+        ];
+
+        return [
+            'type'           => $type,
+            'endpoint'       => $endpoint,
+            'url'            => $url,
+            'requestOptions' => $requestOptions,
+            'timeout'        => $timeout,
+            'maxRetries'     => $maxRetries,
+        ];
+    }
+
+    /**
+     * Builds an async-capable Guzzle Client for one hedge attempt, wired through the
+     * SAME handleRequest()/handleResponse() logging middleware executeCall() uses, so
+     * ApiLog rows are written identically to a real (non-hedged) request. Returns the
+     * Client plus (when not using a test's setOverrideBaseHandler()) the concrete
+     * CurlMultiHandler instance so the caller can drive it via tick() — nothing else
+     * exposes that instance once it's buried inside a HandlerStack.
+     *
+     * @return array{0: Client, 1: ?CurlMultiHandler}
+     */
+    protected function buildHedgeClient(): array
+    {
+        $curlMulti   = null;
+        $baseHandler = $this->overrideBaseHandler;
+
+        if (!$baseHandler) {
+            $curlMulti   = new CurlMultiHandler();
+            $baseHandler = $curlMulti;
+        }
+
+        $callable = fn(callable $handler) => fn(RequestInterface $request, array $options = []) => $this->handleRequest($handler, $request, $options);
+
+        $stack = HandlerStack::create($baseHandler);
+        $stack->push($callable);
+
+        $client = new Client([
+            'handler' => $stack,
+            // Matches client()'s own reasoning exactly (see its comment) — forces
+            // cURL to use poll/select-based timeouts instead of SIGALRM so this
+            // doesn't conflict with pcntl_alarm()-based mechanisms elsewhere.
+            'curl'    => [CURLOPT_NOSIGNAL => true],
+        ]);
+
+        return [$client, $curlMulti];
+    }
+
+    /**
+     * Advances one attempt's async transport by one increment. Real production
+     * traffic always has a genuine CurlMultiHandler; a test using
+     * setOverrideBaseHandler() may supply a handler exposing its own tick() (duck-
+     * typed, not a formal interface — this stays a test-only concern) to control
+     * settlement timing deterministically without real I/O or real sleeping. Either
+     * way, GuzzleHttp\Promise\Utils::queue()->run() is run at least once so any
+     * already-settled promise's queued .then() callback (our own handleResponse()
+     * included) actually fires — CurlMultiHandler::tick() already does this
+     * internally, but running it again is idempotent and guarantees progress even
+     * when neither branch above applies.
+     */
+    protected function tickHedgeTransport(?CurlMultiHandler $curlMulti, $baseHandler): void
+    {
+        if ($curlMulti) {
+            $curlMulti->tick();
+        } elseif ($baseHandler && is_object($baseHandler) && method_exists($baseHandler, 'tick')) {
+            $baseHandler->tick();
+        }
+
+        PromiseUtils::queue()->run();
+    }
+
+    /**
+     * Fires one hedge attempt: clones $this into an isolated instance, builds its
+     * async client, consumes throttle() exactly once, and sends the request. Throws
+     * (uncaught) if throttle() itself throws — callWithHedging() lets that propagate
+     * immediately for attempt 1 (nothing else is in flight yet, matching
+     * executeCall()'s own immediate-throw behavior) and catches it for attempts 2/3
+     * (recorded as a fire failure; other already-in-flight attempts keep racing).
+     */
+    protected function fireHedgeAttempt(array $plan, int $attemptNumber, ?int $parentApiLogId, float $startedAt): array
+    {
+        $attemptApi = clone $this;
+
+        // Reset every piece of request-scoped mutable state a clone would otherwise
+        // carry over — each attempt must start from a genuinely clean slate even
+        // though it inherits $this's configured instance state (baseApiUrl override,
+        // prefixUri, overrideBaseHandler, debug flag, etc.) via the clone.
+        $attemptApi->currentApiLog          = null;
+        $attemptApi->response               = null;
+        $attemptApi->timeoutBackstopEnabled = false;
+        $attemptApi->nextRequestTimeout     = null;
+        $attemptApi->nextRetryCount         = null;
+        $attemptApi->nextSoftTimeout        = null;
+        $attemptApi->queryParams            = [];
+        $attemptApi->client                 = null;
+        $attemptApi->overrideClient         = null;
+        $attemptApi->currentEndpoint        = $plan['endpoint'];
+
+        [$client, $curlMulti] = $attemptApi->buildHedgeClient();
+
+        $attempt = [
+            'api'            => $attemptApi,
+            'client'         => $client,
+            'curlMulti'      => $curlMulti,
+            'baseHandler'    => $attemptApi->overrideBaseHandler,
+            'promise'        => null,
+            'attemptNumber'  => $attemptNumber,
+            'parentApiLogId' => $parentApiLogId,
+            'apiLogId'       => null,
+            'retriesUsed'    => 0,
+            'maxRetries'     => $plan['maxRetries'],
+            'retryAt'        => null,
+            'done'           => false,
+            'failed'         => false,
+            'response'       => null,
+            'lastException'  => null,
+            'startedAt'      => $startedAt,
+        ];
+
+        $attemptApi->throttle();
+
+        return $this->sendHedgeAttemptRequest($attempt, $plan);
+    }
+
+    /**
+     * Sends (or re-sends, for an internal retry) the actual HTTP request for one
+     * hedge attempt and stamps the resulting ApiLog row's hedge-chain fields.
+     * attempt_number=1/parent_api_log_id=null are the column DEFAULTS — deliberately
+     * never touched here for attempt 1, so an ordinary (non-hedged) call's ApiLog rows
+     * are never at risk of this code path accidentally reaching them (it can't:
+     * executeCall() never calls this method at all).
+     */
+    protected function sendHedgeAttemptRequest(array $attempt, array $plan): array
+    {
+        /** @var static $attemptApi */
+        $attemptApi = $attempt['api'];
+        $tryNumber  = $attempt['retriesUsed'] + 1;
+
+        static::logDebug("Hedge attempt {$attempt['attemptNumber']} (try {$tryNumber}) started: {$plan['type']} {$plan['url']} timeout={$plan['timeout']}s [hedged]");
+
+        $attempt['promise'] = $attempt['client']->requestAsync($plan['type'], $plan['url'], $plan['requestOptions']);
+
+        $apiLog              = $attemptApi->getCurrentApiLog();
+        $attempt['apiLogId'] = $apiLog?->id;
+
+        if ($attempt['attemptNumber'] > 1 && $apiLog) {
+            $apiLog->update([
+                'parent_api_log_id' => $attempt['parentApiLogId'],
+                'attempt_number'    => $attempt['attemptNumber'],
+            ]);
+        }
+
+        return $attempt;
+    }
+
+    /**
+     * Advances one in-flight (not yet done) attempt by one tick: services a pending
+     * scheduled retry, otherwise pumps its transport and inspects its promise's
+     * settled state. Never blocks — never calls ->wait() while a promise is PENDING.
+     */
+    protected function tickHedgeAttempt(array $attempt, array $plan): array
+    {
+        if ($attempt['retryAt'] !== null) {
+            if ($this->hedgeClockNow() < $attempt['retryAt']) {
+                return $attempt;
+            }
+
+            $attempt['retryAt'] = null;
+            $attempt['retriesUsed']++;
+
+            return $this->sendHedgeAttemptRequest($attempt, $plan);
+        }
+
+        $this->tickHedgeTransport($attempt['curlMulti'], $attempt['baseHandler']);
+
+        if ($attempt['promise']->getState() === PromiseInterface::PENDING) {
+            return $attempt;
+        }
+
+        try {
+            // Safe: only reached once getState() is no longer PENDING, so this never
+            // blocks — for a FULFILLED promise, wait() returns the value immediately.
+            $attempt['response'] = $attempt['promise']->wait();
+            $attempt['done']     = true;
+        } catch (Throwable $reason) {
+            $attempt = $this->handleHedgeAttemptFailure($attempt, $plan, $reason);
+        }
+
+        return $attempt;
+    }
+
+    /**
+     * Classifies one hedge attempt's failed HTTP try and either schedules a
+     * non-blocking retry (transient/retryable, budget remaining) or marks the attempt
+     * permanently failed. Reuses executeCall()'s own decision-making methods
+     * (resolveRateLimitBlockSeconds()/registerServiceBlock()/getRetryDelayMs()/
+     * RetryableErrorChecker::isApiRetryable()) unchanged — only the scheduling
+     * mechanism (a timestamp serviced by the shared tick loop, instead of a blocking
+     * sleep()) differs, because a blocking sleep() here would stall sibling attempts
+     * still racing concurrently.
+     */
+    protected function handleHedgeAttemptFailure(array $attempt, array $plan, Throwable $reason): array
+    {
+        /** @var static $attemptApi */
+        $attemptApi = $attempt['api'];
+        $apiLog     = $attemptApi->getCurrentApiLog();
+
+        if (!$reason instanceof RequestException && !$reason instanceof ConnectException) {
+            // Outside Guzzle's own exception hierarchy — executeCall()'s catch scope
+            // only classifies RequestException|ConnectException too; anything else is
+            // not retryable here either, matching that same scope.
+            if ($apiLog) {
+                ApiLog::logResponseError($apiLog, $reason, 'request_error');
+            }
+
+            $attempt['done']          = true;
+            $attempt['failed']        = true;
+            $attempt['lastException'] = $reason;
+
+            return $attempt;
+        }
+
+        $isTimeout     = $this->isTimeoutException($reason);
+        $errorType     = $isTimeout ? 'timeout' : ($reason instanceof ConnectException ? 'connection_error' : 'request_error');
+        $errorResponse = $reason instanceof RequestException ? $reason->getResponse() : null;
+
+        $hasRetriesRemaining = $attempt['retriesUsed'] < $attempt['maxRetries'];
+
+        if ($errorResponse && $errorResponse->getStatusCode() === 429) {
+            $blockSeconds = $attemptApi->resolveRateLimitBlockSeconds($errorResponse);
+            $attemptApi->registerServiceBlock($blockSeconds);
+
+            if ($apiLog) {
+                ApiLog::logResponseError($apiLog, $reason, 'rate_limit');
+            }
+
+            $lastException = new RateLimitExceededException(
+                $attemptApi->getServiceName() . " API returned 429 (blocked for {$blockSeconds}s) [hedge attempt {$attempt['attemptNumber']}]",
+                $blockSeconds,
+                $reason
+            );
+
+            $inlineWaitMax = (int)config('danx.errors.rate_limit_inline_wait_max_seconds', 30);
+
+            if ($hasRetriesRemaining && $blockSeconds <= $inlineWaitMax) {
+                $attempt['retryAt']       = $this->hedgeClockNow() + $blockSeconds;
+                $attempt['lastException'] = $lastException;
+
+                return $attempt;
+            }
+
+            $attempt['done']          = true;
+            $attempt['failed']        = true;
+            $attempt['lastException'] = $lastException;
+
+            return $attempt;
+        }
+
+        $message = $isTimeout
+            ? "Request timed out after {$plan['timeout']}s [hedge attempt {$attempt['attemptNumber']}]"
+            : ($reason instanceof ConnectException ? 'Connection failed' : '');
+        $lastException = new ApiRequestException($attemptApi->getServiceName(), $reason, $message);
+
+        if ($apiLog) {
+            ApiLog::logResponseError($apiLog, $reason, $errorType);
+        }
+
+        $isRetryable = RetryableErrorChecker::isApiRetryable($lastException);
+
+        if ($hasRetriesRemaining && $isRetryable) {
+            $delayMs                  = $attemptApi->getRetryDelayMs();
+            $attempt['retryAt']       = $this->hedgeClockNow() + ($delayMs / 1000);
+            $attempt['lastException'] = $lastException;
+
+            return $attempt;
+        }
+
+        $attempt['done']          = true;
+        $attempt['failed']        = true;
+        $attempt['lastException'] = $lastException;
+
+        return $attempt;
+    }
+
+    /**
+     * @return int|null Index into $attempts of the first attempt that has genuinely
+     *                   succeeded (done and not failed), or null if none has yet.
+     */
+    protected function findHedgeWinnerIndex(array $attempts): ?int
+    {
+        foreach ($attempts as $index => $attempt) {
+            if ($attempt['done'] && !$attempt['failed']) {
+                return $index;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * True only when every currently-fired attempt has reached a permanent (non-
+     * retryable-or-exhausted) failure. An empty $attempts array is never "all failed"
+     * (nothing has been tried).
+     */
+    protected function allHedgeAttemptsFailed(array $attempts): bool
+    {
+        if (!$attempts) {
+            return false;
+        }
+
+        foreach ($attempts as $attempt) {
+            if (!$attempt['done'] || !$attempt['failed']) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Every fired attempt permanently failed and the hedge cap was reached — surface
+     * the most informative failure available: the last attempt's own exception, else
+     * (only possible if every attempt failed to even FIRE, e.g. throttle() rejecting
+     * every one) the last fire-time exception, else a generic ApiException.
+     */
+    protected function buildHedgeFailureException(array $attempts, array $fireFailures): Throwable
+    {
+        $last = end($attempts);
+
+        if ($last && $last['lastException']) {
+            return $last['lastException'];
+        }
+
+        if ($fireFailures) {
+            return end($fireFailures);
+        }
+
+        return new ApiException($this->getServiceName() . ': all hedged attempts failed with no recorded exception');
+    }
+
+    /**
+     * Spends HEDGE_LOSER_GRACE_SECONDS (bounded, never indefinite) continuing to drive
+     * every losing attempt still in flight, purely so its ApiLog row can reach a real
+     * terminal state before being marked is_hedge_winner=false. Deliberately does NOT
+     * service a losing attempt's own pending retryAt — initiating a fresh HTTP retry
+     * for a result about to be discarded would spend real provider cost for nothing;
+     * a loser mid-retry-delay when the winner is picked simply stays ambiguous
+     * (is_hedge_winner left null) rather than being pushed toward a resolution we no
+     * longer need. Whether or not every loser finishes within the grace window,
+     * callWithHedging() returns the winner's result either way once this returns.
+     */
+    protected function finalizeLosingHedgeAttempts(array $attempts): void
+    {
+        if (!$attempts) {
+            return;
+        }
+
+        $graceDeadline = $this->hedgeClockNow() + self::HEDGE_LOSER_GRACE_SECONDS;
+
+        while ($this->hedgeClockNow() < $graceDeadline) {
+            $stillPending = false;
+
+            foreach ($attempts as $index => $attempt) {
+                if ($attempt['done'] || $attempt['retryAt'] !== null) {
+                    continue;
+                }
+
+                $this->tickHedgeTransport($attempt['curlMulti'], $attempt['baseHandler']);
+
+                if ($attempt['promise']->getState() === PromiseInterface::PENDING) {
+                    $stillPending = true;
+
+                    continue;
+                }
+
+                try {
+                    $attempt['response'] = $attempt['promise']->wait();
+                    $attempt['done']     = true;
+                } catch (Throwable $reason) {
+                    /** @var static $attemptApi */
+                    $attemptApi = $attempt['api'];
+                    $apiLog     = $attemptApi->getCurrentApiLog();
+
+                    if ($apiLog) {
+                        ApiLog::logResponseError($apiLog, $reason, 'request_error');
+                    }
+
+                    $attempt['done']   = true;
+                    $attempt['failed'] = true;
+                }
+
+                $attempts[$index] = $attempt;
+            }
+
+            if (!$stillPending) {
+                break;
+            }
+
+            usleep(20_000);
+        }
+
+        foreach ($attempts as $attempt) {
+            $this->markHedgeLoserOutcome($attempt);
+        }
+    }
+
+    /**
+     * Marks a losing attempt's ApiLog row is_hedge_winner=false ONLY when we actually
+     * observed it reach a terminal state (success-but-not-first, or a real failure) —
+     * a definitively-known non-winner. An attempt still pending when the grace window
+     * closes is genuinely ambiguous (we never learned what it would have done) and is
+     * deliberately left untouched (column stays null), per this feature's spec.
+     */
+    protected function markHedgeLoserOutcome(array $attempt): void
+    {
+        if (!$attempt['done']) {
+            return;
+        }
+
+        /** @var static $attemptApi */
+        $attemptApi = $attempt['api'];
+
+        $attemptApi->getCurrentApiLog()?->update(['is_hedge_winner' => false]);
+    }
+
+    /**
+     * Applies the winning hedge attempt's outcome onto $this (the orchestrating
+     * instance callers hold a reference to), matching executeCall()'s own contract —
+     * $this->response and $this->currentApiLog set, $this returned — so callers of
+     * call()/post()/get()/etc. see identical behavior whether or not hedging fired.
+     */
+    protected function applyHedgeWinner(array $winner): static
+    {
+        /** @var static $winnerApi */
+        $winnerApi = $winner['api'];
+
+        $winnerApi->getCurrentApiLog()?->update(['is_hedge_winner' => true]);
+
+        $this->response      = $winner['response'];
+        $this->currentApiLog = $winnerApi->getCurrentApiLog();
+
+        $elapsedMs = (int)round(($this->hedgeClockNow() - $winner['startedAt']) * 1000);
+        static::logDebug("Hedge winner: attempt {$winner['attemptNumber']} status=" . $this->response->getStatusCode() . " elapsed={$elapsedMs}ms");
+
+        return $this;
     }
 
     /**

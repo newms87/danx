@@ -30,13 +30,15 @@ class ApiLog extends Model
     ];
 
     protected $casts = [
-        'request'          => 'json',
-        'response'         => 'json',
-        'request_headers'  => 'json',
-        'response_headers' => 'json',
-        'stack_trace'      => 'json',
-        'started_at'       => 'datetime',
-        'will_timeout_at'  => 'datetime',
+        'request'           => 'json',
+        'response'          => 'json',
+        'request_headers'   => 'json',
+        'response_headers'  => 'json',
+        'stack_trace'       => 'json',
+        'started_at'        => 'datetime',
+        'will_timeout_at'   => 'datetime',
+        'attempt_number'    => 'integer',
+        'is_hedge_winner'   => 'boolean',
     ];
 
     public function getDateFormat(): string
@@ -173,6 +175,26 @@ class ApiLog extends Model
     public function auditRequest()
     {
         return $this->belongsTo(AuditRequest::class);
+    }
+
+    /**
+     * The hedge attempt this row was fired FROM (e.g. attempt 2's parent is attempt
+     * 1's row). Null for attempt 1 of a hedged call, and always null for a row
+     * produced by executeCall()'s ordinary (non-hedged) retry loop — see
+     * Api::sendHedgeAttemptRequest().
+     */
+    public function parentApiLog(): BelongsTo
+    {
+        return $this->belongsTo(ApiLog::class, 'parent_api_log_id');
+    }
+
+    /**
+     * Later hedge attempts fired because THIS row's request hadn't returned within
+     * its soft timeout (see Api::callWithHedging()).
+     */
+    public function hedgeAttempts(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(ApiLog::class, 'parent_api_log_id');
     }
 
     /**
