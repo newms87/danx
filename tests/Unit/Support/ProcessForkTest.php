@@ -352,6 +352,212 @@ class ProcessForkTest extends TestCase
     }
 
     /**
+     * SG-229: the sigterm_grace_seconds config must be registered in the
+     * process_fork block, mirroring max_concurrent's env+inline convention.
+     *
+     * ProcessForkTest extends Orchestra\Testbench\TestCase directly (no
+     * getPackageProviders() override), so DanxServiceProvider::mergeConfigFrom()
+     * never boots in this test class and config('danx.*') returns null for any
+     * key not explicitly set at runtime — the same reason
+     * test_default_concurrent_cap_reads_from_config writes its value via
+     * config([...]) rather than reading an unset default. So this asserts the
+     * config FILE's own registration directly rather than the (unbooted) merged
+     * config; the runtime default-of-3 fallback is exercised for real by the
+     * other new tests below via ProcessFork.php's own inline
+     * config('danx.process_fork.sigterm_grace_seconds', 3) read.
+     */
+    public function test_sigterm_grace_seconds_config_registered(): void
+    {
+        $config = require dirname(__DIR__, 3) . '/config/danx.php';
+
+        $this->assertSame(3, $config['process_fork']['sigterm_grace_seconds']);
+    }
+
+    /**
+     * SG-229 — Path A: cancellation detected inside waitForChildNonBlocking().
+     *
+     * Both children install SIG_IGN for SIGTERM (simulating a child stuck in a
+     * blocked syscall that never returns to the PHP VM to run its normal SIGTERM
+     * handler) then sleep far longer than the configured grace. Before the fix,
+     * reapKilledChildren()'s unconditional blocking pcntl_waitpid(-1) would hang
+     * forever here. After the fix, the parent must return within roughly
+     * (sigterm_grace_seconds + a short SIGKILL drain) regardless of the 10s sleep.
+     */
+    public function test_reap_bounded_when_child_ignores_sigterm_inside_wait(): void
+    {
+        if (!function_exists('pcntl_fork')) {
+            $this->markTestSkipped('pcntl extension not available');
+        }
+
+        config(['danx.process_fork.sigterm_grace_seconds' => 1]);
+
+        $callCount      = 0;
+        $shouldContinue = function () use (&$callCount): bool {
+            $callCount++;
+
+            // First call (top-of-loop, before forking) allows the fork to happen.
+            // Second call (inside the wait loop, since neither child will have
+            // exited yet) triggers cancellation while both children are still
+            // active — this is Path A.
+            return $callCount <= 1;
+        };
+
+        $start = microtime(true);
+
+        $results = ProcessFork::run(
+            [
+                function () {
+                    pcntl_signal(SIGTERM, SIG_IGN);
+                    sleep(10); // Would hang the pre-fix reaper forever
+
+                    return 'should_not_finish';
+                },
+                function () {
+                    pcntl_signal(SIGTERM, SIG_IGN);
+                    sleep(10); // Would hang the pre-fix reaper forever
+
+                    return 'should_not_finish';
+                },
+            ],
+            shouldContinue: $shouldContinue,
+        );
+
+        $elapsed = microtime(true) - $start;
+
+        $this->assertLessThan(5.0, $elapsed, "Cancellation reaping was not bounded — took {$elapsed}s (child ignores SIGTERM, must escalate to SIGKILL)");
+        $this->assertCount(2, $results);
+
+        foreach ($results as $index => $result) {
+            $this->assertNotSame('success', $result['status'], "Task $index should have been cancelled, not completed");
+            $this->assertSame('Cancelled', $result['error'], "Task $index's stuck child should be recorded as Cancelled after SIGKILL escalation");
+        }
+    }
+
+    /**
+     * SG-229 — Path B: cancellation detected at the TOP of forkAndRun()'s wave
+     * loop (production scenario — a multi-wave fork where shouldContinue flips
+     * false between waves, not while a wait is already in progress).
+     *
+     * maxConcurrent=2, 3 tasks. Task 0 finishes quickly and gets reaped normally.
+     * Task 1 ignores SIGTERM and sleeps far longer than the grace. shouldContinue
+     * flips false (time-based, not call-count-based, to stay robust against fork
+     * scheduling jitter) only after task 0's own completion window has passed, so
+     * cancellation is detected back at the top of the outer wave loop with task 1
+     * still active and task 2 never yet forked ("still queued").
+     *
+     * Before the fix this routed into waitForChildNonBlocking()'s $alreadyCancelled
+     * WNOHANG busy-loop, which spins on usleep(500_000) forever for a child that
+     * never returns 0 from pcntl_waitpid — an unbounded hang distinct from (and not
+     * fixed by) a Path-A-only patch of reapKilledChildren(). This test proves the
+     * single-reaper invariant behaviorally: it would time out if that dead path
+     * still existed.
+     */
+    public function test_reap_bounded_when_child_ignores_sigterm_top_of_wave_loop(): void
+    {
+        if (!function_exists('pcntl_fork')) {
+            $this->markTestSkipped('pcntl extension not available');
+        }
+
+        config(['danx.process_fork.sigterm_grace_seconds' => 1]);
+
+        $start          = microtime(true);
+        $shouldContinue = function () use ($start): bool {
+            // Allow task 0 (a 100ms task) plenty of time to finish and be reaped
+            // via the wait loop's normal poll/sleep cadence, then cancel.
+            return (microtime(true) - $start) < 0.3;
+        };
+
+        $results = ProcessFork::run(
+            [
+                function () {
+                    usleep(100_000); // 100ms — finishes well inside the 300ms window
+
+                    return 'fast_task';
+                },
+                function () {
+                    pcntl_signal(SIGTERM, SIG_IGN);
+                    sleep(10); // Would hang the pre-fix already-cancelled busy loop forever
+                },
+                fn() => 'never_started',
+            ],
+            maxConcurrent: 2,
+            shouldContinue: $shouldContinue,
+        );
+
+        $elapsed = microtime(true) - $start;
+
+        $this->assertLessThan(5.0, $elapsed, "Top-of-wave-loop cancellation was not bounded — took {$elapsed}s");
+        $this->assertCount(3, $results);
+
+        // Task 0 had already completed successfully before cancellation fired.
+        $this->assertSame('success', $results[0]['status'], 'Task 0 should have completed before cancellation was detected');
+        $this->assertSame('fast_task', $results[0]['result']);
+
+        // Task 1's stuck child was force-killed and reaped.
+        $this->assertNotSame('success', $results[1]['status'], 'Task 1 (SIGTERM-ignoring) should have been cancelled');
+        $this->assertSame('Cancelled', $results[1]['error']);
+
+        // Task 2 was never forked.
+        $this->assertNotSame('success', $results[2]['status'], 'Task 2 should never have been started');
+        $this->assertSame('Cancelled', $results[2]['error']);
+    }
+
+    /**
+     * SG-229: a child still alive after the SIGTERM grace elapses is forcibly
+     * SIGKILL'd and reaped — proves the configured grace value itself drives the
+     * timing (not just that the call is bounded somewhere well under the child's
+     * 10s sleep), mirroring test_default_concurrent_cap_reads_from_config's
+     * config-driven-behavior pattern. With sigterm_grace_seconds=1, the parent
+     * must wait AT LEAST ~1s (the grace itself) but return well before the
+     * grace-plus-generous-SIGKILL-drain upper bound.
+     */
+    public function test_sigterm_grace_seconds_shortens_bounded_return(): void
+    {
+        if (!function_exists('pcntl_fork')) {
+            $this->markTestSkipped('pcntl extension not available');
+        }
+
+        config(['danx.process_fork.sigterm_grace_seconds' => 1]);
+
+        $callCount      = 0;
+        $shouldContinue = function () use (&$callCount): bool {
+            $callCount++;
+
+            return $callCount <= 1;
+        };
+
+        $start = microtime(true);
+
+        $results = ProcessFork::run(
+            [
+                function () {
+                    pcntl_signal(SIGTERM, SIG_IGN);
+                    sleep(10);
+
+                    return 'should_not_finish';
+                },
+                function () {
+                    pcntl_signal(SIGTERM, SIG_IGN);
+                    sleep(10);
+
+                    return 'should_not_finish';
+                },
+            ],
+            shouldContinue: $shouldContinue,
+        );
+
+        $elapsed = microtime(true) - $start;
+
+        $this->assertGreaterThanOrEqual(0.9, $elapsed, "Reaper returned before the configured 1s SIGTERM grace even elapsed — grace value is not being honored ({$elapsed}s)");
+        $this->assertLessThan(4.0, $elapsed, "Reaper took far longer than the configured 1s grace + SIGKILL drain — grace value is not bounding the wait ({$elapsed}s)");
+
+        foreach ($results as $index => $result) {
+            $this->assertNotSame('success', $result['status'], "Task $index should have been cancelled");
+            $this->assertSame('Cancelled', $result['error']);
+        }
+    }
+
+    /**
      * Test that shouldContinue=null (default) behaves the same as before —
      * all tasks complete normally with blocking wait.
      */

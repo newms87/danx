@@ -26,6 +26,17 @@ return [
          * DANX_PROCESS_FORK_MAX_CONCURRENT when the deployment scales PG limits.
          */
         'max_concurrent' => (int)env('DANX_PROCESS_FORK_MAX_CONCURRENT', 16),
+
+        /**
+         * How long (seconds) the parent waits for a SIGTERM'd child to exit before
+         * escalating to SIGKILL. A child stuck in a blocked syscall (e.g. a hung
+         * network read) never returns to the PHP VM to run its SIGTERM handler, so
+         * without this bound cancellation reaping blocks forever — burning the
+         * caller's remaining execution time until an external hard-kill (e.g. AWS
+         * Lambda's own timeout) tears down the whole process with no checkpoint
+         * ever written. Override via DANX_PROCESS_FORK_SIGTERM_GRACE_SECONDS.
+         */
+        'sigterm_grace_seconds' => (int)env('DANX_PROCESS_FORK_SIGTERM_GRACE_SECONDS', 3),
     ],
 
     'audit'               => [

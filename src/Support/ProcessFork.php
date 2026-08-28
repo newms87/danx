@@ -213,6 +213,9 @@ class ProcessFork
             if (!$cancelled && $shouldContinue && !$shouldContinue()) {
                 self::logDebug('shouldContinue returned false — cancelling all children');
                 self::killActiveChildren($activeChildren);
+                // Drain immediately through the single bounded reaper — don't rely on the
+                // loop re-entering waitForChildNonBlocking to reap these children later.
+                self::reapKilledChildren($activeChildren, $results, $tempFiles);
                 $cancelled = true;
                 // Don't fork any more tasks — just wait for children to exit below
             }
@@ -248,7 +251,7 @@ class ProcessFork
             if (!empty($activeChildren)) {
                 if ($shouldContinue) {
                     // Non-blocking wait — poll shouldContinue between checks
-                    $exitedPid = self::waitForChildNonBlocking($activeChildren, $results, $tempFiles, $shouldContinue, $cancelled);
+                    $exitedPid = self::waitForChildNonBlocking($activeChildren, $results, $tempFiles, $shouldContinue);
 
                     if ($exitedPid === -2) {
                         // Cancellation triggered during wait
@@ -289,7 +292,7 @@ class ProcessFork
      *
      * @return int -2 if cancelled, otherwise the last reaped PID (or 0 if none reaped yet)
      */
-    protected static function waitForChildNonBlocking(array &$activeChildren, array &$results, array $tempFiles, callable $shouldContinue, bool $alreadyCancelled): int
+    protected static function waitForChildNonBlocking(array &$activeChildren, array &$results, array $tempFiles, callable $shouldContinue): int
     {
         while (!empty($activeChildren)) {
             // Try to reap any exited child (non-blocking)
@@ -317,7 +320,7 @@ class ProcessFork
             }
 
             // Check cancellation
-            if (!$alreadyCancelled && !$shouldContinue()) {
+            if (!$shouldContinue()) {
                 self::logDebug('shouldContinue returned false during wait — cancelling all children');
                 self::killActiveChildren($activeChildren);
 
@@ -347,26 +350,81 @@ class ProcessFork
 
     /**
      * Wait for all killed children to exit, recording their results as 'Cancelled'.
+     *
+     * Bounded — the single reaping strategy for every cancellation trigger point.
+     * SIGTERM is not guaranteed to be delivered/acted on promptly (a child stuck in a
+     * blocked syscall, e.g. a hung network read, never returns to the PHP VM to run its
+     * signal handler), so this polls non-blocking (WNOHANG) for at most
+     * `danx.process_fork.sigterm_grace_seconds`, then force-kills (SIGKILL, which cannot
+     * be caught/blocked/ignored) and drains anything still alive with a final short
+     * bounded loop. Never blocks indefinitely regardless of child responsiveness.
      */
     protected static function reapKilledChildren(array &$activeChildren, array &$results, array $tempFiles): void
     {
-        while (!empty($activeChildren)) {
-            $status    = 0;
-            $exitedPid = pcntl_waitpid(-1, $status);
+        $graceSeconds = (int)config('danx.process_fork.sigterm_grace_seconds', 3);
 
-            if ($exitedPid > 0 && isset($activeChildren[$exitedPid])) {
-                $taskIndex = $activeChildren[$exitedPid];
-                unset($activeChildren[$exitedPid]);
+        self::drainNonBlocking($activeChildren, $results, $tempFiles, $graceSeconds);
 
-                // Try to read the result — the child may have finished before SIGTERM arrived
-                $result = self::readChildResult($tempFiles[$taskIndex], $status);
-                if ($result['status'] === 'success') {
-                    $results[$taskIndex] = $result;
-                } else {
-                    $results[$taskIndex] = self::errorResult('Cancelled');
-                }
-            }
+        if (empty($activeChildren)) {
+            return;
         }
+
+        self::logDebug('SIGTERM grace elapsed with children still alive — escalating to SIGKILL', [
+            'pids' => array_keys($activeChildren),
+        ]);
+        foreach (array_keys($activeChildren) as $pid) {
+            posix_kill($pid, SIGKILL);
+        }
+
+        // SIGKILL cannot be caught or blocked, so a killed child exits almost immediately —
+        // a short bounded drain is enough to reap it.
+        self::drainNonBlocking($activeChildren, $results, $tempFiles, 2);
+
+        // Anything still unreaped (should not happen after SIGKILL) is recorded as
+        // Cancelled anyway so the caller is never blocked by an OS-level anomaly.
+        foreach (array_keys($activeChildren) as $pid) {
+            $taskIndex = $activeChildren[$pid];
+            unset($activeChildren[$pid]);
+            $results[$taskIndex] = self::errorResult('Cancelled');
+        }
+    }
+
+    /**
+     * Poll-reap every child in $activeChildren via non-blocking WNOHANG until either all
+     * are reaped or $timeoutSeconds elapses. Shared by reapKilledChildren()'s SIGTERM-grace
+     * phase and its post-SIGKILL drain phase.
+     */
+    protected static function drainNonBlocking(array &$activeChildren, array &$results, array $tempFiles, int $timeoutSeconds): void
+    {
+        $deadline = microtime(true) + $timeoutSeconds;
+
+        while (!empty($activeChildren) && microtime(true) < $deadline) {
+            $status    = 0;
+            $exitedPid = pcntl_waitpid(-1, $status, WNOHANG);
+
+            if ($exitedPid > 0) {
+                if (isset($activeChildren[$exitedPid])) {
+                    self::recordReapedChild($exitedPid, $status, $activeChildren, $results, $tempFiles);
+                }
+
+                continue;
+            }
+
+            usleep(500_000);
+        }
+    }
+
+    /**
+     * Record a reaped child's result — success if it finished before SIGTERM/SIGKILL
+     * arrived, otherwise 'Cancelled'.
+     */
+    protected static function recordReapedChild(int $pid, int $status, array &$activeChildren, array &$results, array $tempFiles): void
+    {
+        $taskIndex = $activeChildren[$pid];
+        unset($activeChildren[$pid]);
+
+        $result               = self::readChildResult($tempFiles[$taskIndex], $status);
+        $results[$taskIndex] = $result['status'] === 'success' ? $result : self::errorResult('Cancelled');
     }
 
     /**
