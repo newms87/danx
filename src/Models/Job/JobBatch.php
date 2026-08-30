@@ -42,10 +42,29 @@ class JobBatch extends Model
 	 *        settled -- not just this one. Safe to call createForJobs() several times
 	 *        concurrently for the SAME $waiter (e.g. from separate ProcessFork children);
 	 *        the waiter only resumes after the LAST of them settles.
+	 * @param callable|null $beforeDispatch Invoked with the created JobBatch after the batch
+	 *        exists, the waiter (if any) is registered, and every job's JobDispatch has been
+	 *        associated -- but BEFORE any job is dispatched. This is the only safe moment for
+	 *        a caller to record its own "I am waiting on batch N" state.
+	 *
+	 *        WHY THIS HOOK EXISTS: this method dispatches from inside its own call, so a
+	 *        caller doing its bookkeeping on the returned JobBatch is racing the jobs. Under
+	 *        a synchronous queue driver the first job can run to completion -- and, if it is
+	 *        the batch's last pending job, invoke on_complete -- before this method returns.
+	 *        A waiter whose "waiting" marker is written afterwards is not yet waiting when
+	 *        the completion callback looks at it, so the callback declines to resume it and
+	 *        the waiter hangs until something times it out. Before this hook existed,
+	 *        callers avoided that by hand-rolling this method's create/associate steps and
+	 *        dispatching themselves; three separate copies of that workaround existed.
+	 *
+	 *        A throw from $beforeDispatch propagates with NOTHING dispatched -- the batch
+	 *        row and waiter record exist but no work starts. That is the safe failure
+	 *        direction: the caller sees the exception and can clean up, versus jobs running
+	 *        against a waiter that was never marked and can never be resumed.
 	 * @return JobBatch
 	 * @throws Throwable
 	 */
-	public static function createForJobs(string $name, array $jobs, $onComplete = null, ?Model $waiter = null): JobBatch
+	public static function createForJobs(string $name, array $jobs, $onComplete = null, ?Model $waiter = null, ?callable $beforeDispatch = null): JobBatch
 	{
 		if ($waiter && !$waiter instanceof JobBatchWaiterContract) {
 			throw new InvalidArgumentException(get_class($waiter) . ' must implement JobBatchWaiterContract to be used as a JobBatch waiter');
@@ -80,6 +99,13 @@ class JobBatch extends Model
 
 		// Associate all jobs with the batch
 		JobDispatch::whereIn('id', $jobIds)->update(['job_batch_id' => $jobBatch->id]);
+
+		// Everything is associated and the waiter is registered, but nothing has been
+		// dispatched yet -- the caller's own bookkeeping goes here. See the $beforeDispatch
+		// docblock for the race this ordering exists to close.
+		if ($beforeDispatch) {
+			$beforeDispatch($jobBatch);
+		}
 
 		// Dispatch all the jobs
 		foreach($jobs as $job) {
