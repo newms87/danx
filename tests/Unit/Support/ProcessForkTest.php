@@ -743,4 +743,140 @@ class ProcessForkTest extends TestCase
         }
         Storage::disk('local')->delete('pfork-warm.txt');
     }
+
+    /**
+     * SG-177 — a stray child left behind by an EARLIER run in the same long-lived
+     * process must be drained immediately, not at 2 per second.
+     *
+     * `pcntl_waitpid(-1, ..., WNOHANG)` reaps ANY child of the host process, not
+     * only the ones this run forked. A `queue:work` process hosts many ProcessFork
+     * runs over its lifetime, and any run interrupted before it reaps leaves its
+     * children parented to that worker, where they accumulate (1,441 were observed
+     * under one worker). Before the fix, reaping a PID that was not in
+     * $activeChildren fell through to the bottom-of-loop usleep(500_000), so N
+     * strays cost N/2 seconds before the loop could even observe its OWN children
+     * exiting — which is how a 16-second fan-out blew a 540-second deadline.
+     *
+     * This test plants STRAYS zombies parented to the PHPUnit process, then runs a
+     * multi-wave fan-out. maxConcurrent:1 guarantees the wait loop is entered for
+     * every task, and a $shouldContinue callback is REQUIRED: forkAndRun only takes
+     * the non-blocking waitForChildNonBlocking() path when one is supplied, and the
+     * 500ms sleep this regression is about lives at the bottom of that loop. Without
+     * the callback the run uses the blocking pcntl_waitpid() branch, which never
+     * sleeps and so cannot exhibit the bug at all.
+     *
+     * With the fix, the strays are drained on the first few WNOHANG calls and the run
+     * finishes in well under a second; without it, the floor is STRAYS * 0.5s
+     * regardless of how fast the real tasks are.
+     */
+    public function test_stray_children_are_drained_without_paying_the_wait_sleep(): void
+    {
+        if (!function_exists('pcntl_fork')) {
+            $this->markTestSkipped('pcntl extension not available');
+        }
+
+        $strays    = 20;
+        $strayPids = [];
+
+        for ($i = 0; $i < $strays; $i++) {
+            $pid = pcntl_fork();
+
+            if ($pid === -1) {
+                $this->fail('pcntl_fork() failed while planting stray children');
+            }
+
+            if ($pid === 0) {
+                // Child: exit immediately, mirroring ProcessFork::forkChild()'s own
+                // child exit. Nobody reaps it, so it stays a zombie on our PID.
+                exit(0);
+            }
+
+            $strayPids[] = $pid;
+        }
+
+        // Let every stray actually reach zombie state before timing anything —
+        // a stray still running is not the condition under test.
+        $this->waitForZombies($strayPids);
+
+        $started = microtime(true);
+        $results = ProcessFork::run(
+            [
+                fn() => 'a',
+                fn() => 'b',
+                fn() => 'c',
+                fn() => 'd',
+            ],
+            maxConcurrent: 1,
+            shouldContinue: fn() => true
+        );
+        $elapsed = microtime(true) - $started;
+
+        $this->assertCount(4, $results);
+        foreach ($results as $index => $result) {
+            $this->assertSame('success', $result['status'], "Task $index failed: " . ($result['error'] ?? 'unknown'));
+        }
+        $this->assertSame(['a', 'b', 'c', 'd'], array_column($results, 'result'), 'Strays must not corrupt this run\'s own results');
+
+        // Pre-fix floor was $strays * 0.5s = 10s. Half of that is comfortably
+        // above any real cost of 4 trivial forks and far below the broken path.
+        $this->assertLessThan(
+            $strays * 0.25,
+            $elapsed,
+            sprintf(
+                'Run took %.2fs with %d strays planted — the wait loop is paying a sleep per stray reaped',
+                $elapsed,
+                $strays
+            )
+        );
+
+        // Every stray must have been reaped BY the run — that is the mechanism,
+        // not just a side effect. A timing assertion alone could pass for the wrong
+        // reason (e.g. the loop exiting early), so confirm none is reapable now:
+        // pcntl_waitpid returns -1/ECHILD only once the PID is no longer our child.
+        foreach ($strayPids as $pid) {
+            $this->assertSame(
+                -1,
+                pcntl_waitpid($pid, $status, WNOHANG),
+                "Stray $pid is still an unreaped child after the run — ProcessFork did not drain it"
+            );
+        }
+    }
+
+    /**
+     * Block until every listed PID is a zombie (exited, unreaped) or the deadline
+     * passes. Reads /proc/<pid>/stat's third field, the process state character.
+     */
+    private function waitForZombies(array $pids): void
+    {
+        $deadline = microtime(true) + 5;
+
+        while (microtime(true) < $deadline) {
+            $pending = 0;
+
+            foreach ($pids as $pid) {
+                $stat = @file_get_contents("/proc/$pid/stat");
+
+                // A vanished /proc entry means something else already reaped it,
+                // which cannot happen here — but treat it as settled either way.
+                if ($stat === false) {
+                    continue;
+                }
+
+                // Fields after the (comm) parenthesis: state is the first of them.
+                $after = substr($stat, (int)strrpos($stat, ')') + 2);
+
+                if (($after[0] ?? '') !== 'Z') {
+                    $pending++;
+                }
+            }
+
+            if ($pending === 0) {
+                return;
+            }
+
+            usleep(10_000);
+        }
+
+        $this->fail('Stray children never reached zombie state — the precondition for this test does not hold');
+    }
 }
