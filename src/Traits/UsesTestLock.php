@@ -76,10 +76,33 @@ trait UsesTestLock
         }
 
         self::$testLockAcquired = true;
-        self::$testLockService  = new TestLockService;
+        self::$testLockService  = new TestLockService(static::testLockKeyPrefix());
         self::$testLockService->acquireLock();
 
         register_shutdown_function(static fn() => self::releaseTestLock());
+    }
+
+    /**
+     * Redis key prefix that scopes the lock.
+     *
+     * Null keeps TestLockService's own working-directory default, which serialises
+     * every suite run from the same checkout — the historical behaviour, unchanged
+     * for callers that do not override this.
+     *
+     * Override it when suites CAN safely run in parallel from one checkout, and
+     * return a prefix carrying whatever they must not share. gpt-manager returns
+     * its per-initiator test-database name: with a single shared key, two runners
+     * take turns per test class, and a class held past TestLockService's 60-second
+     * acquisition budget makes the OTHER runner throw "Failed to acquire test lock
+     * after 60 seconds" — reintroducing false failures through the back door that
+     * per-database isolation was meant to close.
+     *
+     * This does NOT relax the per-process locking above. Runs sharing a database
+     * still share a lock, which is the entire point of that mechanism.
+     */
+    protected static function testLockKeyPrefix(): ?string
+    {
+        return null;
     }
 
     /**
