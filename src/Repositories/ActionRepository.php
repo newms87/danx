@@ -26,12 +26,24 @@ abstract class ActionRepository
 	}
 
 	/**
-	 * Returns an instantiated model matching the ID.
+	 * Returns an instantiated model matching the ID, resolved through {@see query()}.
+	 *
+	 * query() is the repository's declared visible set: list(), summary(), export() and
+	 * batchAction() all read through it, so a subclass that scopes query() — to a tenant,
+	 * a permission, a status — expects that scope to hold everywhere. instance() used to
+	 * build off the raw model query instead, and it is what ActionRoute hands to
+	 * `{id}/details`, `{id}/relation/{relation}` and `{id}/apply-action`. A subclass could
+	 * therefore scope its list and still resolve — and, through apply-action, WRITE — a
+	 * record outside that scope, from an id alone.
+	 *
+	 * A subclass that does not override query() is unaffected: the base query() is exactly
+	 * the raw model query this method used to build directly.
+	 *
 	 * Supports withTrashed query parameter to include soft-deleted records.
 	 */
 	public function instance($id): ?Model
 	{
-		$query = $this->model()->query();
+		$query = $this->query();
 
 		if (request()->boolean('withTrashed') && method_exists($this->model(), 'trashed')) {
 			$query->withTrashed();
