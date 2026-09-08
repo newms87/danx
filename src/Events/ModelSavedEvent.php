@@ -70,6 +70,34 @@ abstract class ModelSavedEvent implements ShouldBroadcast
     protected string $broadcastedAt;
 
     /**
+     * The user who actually caused this change, captured at construction time.
+     *
+     * ==== THIS MUST BE READ HERE AND NOWHERE ELSE ====
+     *
+     * The constructor runs in the process that SAVED the model, so `auth()->id()`
+     * is the real actor there: the request's user under Octane, or the user danx's
+     * {@see \Newms87\Danx\Jobs\Job::__unserialize()} authenticated the worker as for
+     * the job doing the saving.
+     *
+     * `broadcastWith()` is a different process entirely. This event is
+     * `ShouldBroadcast`, so Laravel wraps it in a queued `BroadcastEvent` job that a
+     * queue worker picks up later; nothing in Laravel resets the auth guard between
+     * jobs, and `BroadcastEvent` is not a danx Job so it never sets one either.
+     * `auth()->id()` there is therefore whatever user the LAST danx job to run in
+     * that worker process happened to leave behind - which is usually a different
+     * person, and can be minutes stale.
+     *
+     * Measured 2026-09-08 on local dev, one worker process serving the `default`
+     * queue, each rename carrying a fresh UUID so the payload could not be confused
+     * with anyone else's: three saves made by user 2 and user 5 all arrived stamped
+     * user 4, because an unrelated extraction owned by user 4 was running on the
+     * same worker; queueing a closure that authenticated that worker as user 5
+     * immediately before a save by user 2 made the very next payload say 5. The
+     * field tracked the worker, never the actor.
+     */
+    protected ?int $triggeredByUserId;
+
+    /**
      * Stored model references for serialization.
      * Maps property name to [class, id, attributes] for restoration.
      *
@@ -88,6 +116,8 @@ abstract class ModelSavedEvent implements ShouldBroadcast
         // Capture traceability data at construction time (before queuing)
         $this->auditRequestId = AuditDriver::getAuditRequest()?->id;
         $this->broadcastedAt = now()->toIso8601String();
+        // The actor, read HERE on purpose - see the property's docblock
+        $this->triggeredByUserId = auth()->id();
     }
 
     /**
@@ -355,8 +385,10 @@ abstract class ModelSavedEvent implements ShouldBroadcast
 
             $data = $this->data();
 
-            // Include the user who triggered this event so frontend can filter out own events
-            $data['triggered_by_user_id'] = auth()->id();
+            // Include the user who triggered this event so frontend can filter out own events.
+            // Captured in the constructor, in the process that saved the model - reading
+            // auth()->id() here would report the queue worker's leftover guard instead.
+            $data['triggered_by_user_id'] = $this->triggeredByUserId;
 
             // Include traceability data captured at construction time
             $data['__audit_request_id'] = $this->auditRequestId;
