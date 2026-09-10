@@ -90,8 +90,14 @@ trait BroadcastsWithSubscriptions
                 if ($isDeletedEvent) {
                     $matches = $this->matchesFilterInMemory($model, $filter);
                 } else {
+                    // whereKey() — never where('id', ...). The key must be QUALIFIED: a
+                    // dot-notation filter (e.g. `teamObject.schema_definition_id`) JOINs the
+                    // related table, which has its own `id`, and filter() only qualifies the
+                    // wheres that exist when it builds that join. A bare `id` added after it is
+                    // ambiguous, the query throws, the catch below swallows it, and every
+                    // subscriber on a dot-notation filter silently stops hearing anything.
                     $matches = $modelClass::filter($filter)
-                        ->where('id', $model->id)
+                        ->whereKey($model->getKey())
                         ->exists();
                 }
 
