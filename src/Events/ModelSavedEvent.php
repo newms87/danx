@@ -394,6 +394,13 @@ abstract class ModelSavedEvent implements ShouldBroadcast
             $data['__audit_request_id'] = $this->auditRequestId;
             $data['__broadcasted_at'] = $this->broadcastedAt;
 
+            // Which subscription entries this event is FOR. The channel is team-wide, so
+            // without this a client with a filtered list cannot tell an event that matched
+            // its filter from one a teammate's wider subscription pulled onto the channel.
+            // Recorded by broadcastOn() in THIS process - Laravel's BroadcastEvent::handle()
+            // resolves the channels before it builds the payload. See the property docblock.
+            $data['__subscriptions'] = $this->satisfiedSubscriptions;
+
             return $data;
         } finally {
             // Always release the lock

@@ -12,7 +12,37 @@ trait BroadcastsWithSubscriptions
     use HasDebugLogging;
 
     /**
-     * Get all user IDs subscribed to this resource
+     * The subscription entries this model satisfied at the last {@see getSubscribedUsers()},
+     * named by their cache keys, e.g. `subscribe:WorkflowInput:1:filter:<md5>`.
+     *
+     * ==== WHY AN EVENT HAS TO SAY THIS ====
+     *
+     * The channel is ONE per resource type per team ({@see getSubscribedChannels()}), so every
+     * client on the team receives every event this gate lets through — and it lets one through
+     * when ANY entry on the team matches. A client with a filtered list therefore cannot tell
+     * "this matched my filter" from "this matched a teammate's wider subscription" unless the
+     * event says which entries it satisfied. Observed 2026-09-11 in gpt-manager's Demand Desk:
+     * a queue scoped to one schema counted a new demand of no schema at all, because another
+     * member of the team held an unscoped WorkflowInput subscription.
+     *
+     * ==== WHY CACHE KEYS, NOT SOME OTHER NAME ====
+     *
+     * They are the strings the subscribe side wrote and this gate read, so they are the only
+     * names both ends already hold: gpt-manager's subscribe route returns each entry's
+     * `cache_key`, and a client compares that string against this list without parsing or
+     * hashing anything. A second vocabulary would be a second thing to keep in step.
+     *
+     * Only entries that still have subscribers are named. Computing this costs nothing extra:
+     * the gate already evaluates every entry to decide whether to broadcast at all.
+     * {@see \Newms87\Danx\Events\ModelSavedEvent::broadcastWith()} sends it as `__subscriptions`.
+     *
+     * @var list<string>
+     */
+    protected array $satisfiedSubscriptions = [];
+
+    /**
+     * Get all user IDs subscribed to this resource, and record which subscription entries the
+     * model satisfied ({@see $satisfiedSubscriptions}).
      *
      * @param  string  $resourceType  The resource type (e.g., "WorkflowRun")
      * @param  int|null  $teamId  The team ID (null for models without team association)
@@ -22,29 +52,27 @@ trait BroadcastsWithSubscriptions
      */
     protected function getSubscribedUsers(string $resourceType, ?int $teamId, Model $model, string $modelClass): array
     {
+        $this->satisfiedSubscriptions = [];
+
         // No team = no subscriptions possible
         if ($teamId === null) {
             return [];
         }
 
-        $userIds = [];
+        $prefix = "subscribe:{$resourceType}:{$teamId}";
 
-        // 1. Check channel-wide subscriptions (subscribe to ALL models of this type)
-        $channelWideKey   = "subscribe:{$resourceType}:{$teamId}:all";
-        $channelWideUsers = Cache::get($channelWideKey, []);
-        $userIds          = array_merge($userIds, $channelWideUsers);
+        // Every entry this model satisfies, keyed by its cache key: channel-wide (ALL models of
+        // this type), model-specific (this id), and every filter that matches it. An entry whose
+        // subscriber list has emptied satisfies nobody, so it is dropped before it is named.
+        $entries = array_filter([
+            "{$prefix}:all"             => Cache::get("{$prefix}:all", []),
+            "{$prefix}:id:{$model->id}" => Cache::get("{$prefix}:id:{$model->id}", []),
+            ...$this->getMatchingFilterSubscriptions($resourceType, $teamId, $model, $modelClass),
+        ]);
 
-        // 2. Check model-specific subscriptions (subscribe to this specific model ID)
-        $modelSpecificKey   = "subscribe:{$resourceType}:{$teamId}:id:{$model->id}";
-        $modelSpecificUsers = Cache::get($modelSpecificKey, []);
-        $userIds            = array_merge($userIds, $modelSpecificUsers);
+        $this->satisfiedSubscriptions = array_keys($entries);
 
-        // 3. Check filter-based subscriptions
-        $filterUsers = $this->getFilterBasedSubscribers($resourceType, $teamId, $model, $modelClass);
-        $userIds     = array_merge($userIds, $filterUsers);
-
-        // Deduplicate and return
-        $uniqueUserIds = array_unique($userIds);
+        $uniqueUserIds = array_unique(array_merge([], ...array_values($entries)));
 
         // Single consolidated log entry
         if (!empty($uniqueUserIds)) {
@@ -55,17 +83,17 @@ trait BroadcastsWithSubscriptions
     }
 
     /**
-     * Get users subscribed via filter-based subscriptions
+     * The filter-based subscription entries this model matches.
      *
      * @param  string  $resourceType  The resource type
      * @param  int|null  $teamId  The team ID
      * @param  Model  $model  The model instance
      * @param  string  $modelClass  The model class name for filtering
-     * @return array Array of user IDs
+     * @return array<string, array> Subscriber user IDs, keyed by each matching filter's cache key
      */
-    protected function getFilterBasedSubscribers(string $resourceType, ?int $teamId, Model $model, string $modelClass): array
+    protected function getMatchingFilterSubscriptions(string $resourceType, ?int $teamId, Model $model, string $modelClass): array
     {
-        $userIds = [];
+        $matching = [];
 
         // Get filter index for this resource/team
         $filterIndexKey = "subscribe:{$resourceType}:{$teamId}:filters";
@@ -102,8 +130,7 @@ trait BroadcastsWithSubscriptions
                 }
 
                 if ($matches) {
-                    $subscribers = Cache::get($filterKey, []);
-                    $userIds     = array_merge($userIds, $subscribers);
+                    $matching[$filterKey] = Cache::get($filterKey, []);
                 }
             } catch (\Exception $e) {
                 // Log error but continue - invalid filters shouldn't break broadcasting
@@ -111,7 +138,7 @@ trait BroadcastsWithSubscriptions
             }
         }
 
-        return $userIds;
+        return $matching;
     }
 
     /**
