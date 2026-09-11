@@ -97,8 +97,13 @@ abstract class ActionController extends Controller
 			return response(['error' => true, 'message' => 'Item not found'], 404);
 		}
 
-		$request = request();
-		$fields  = app(PagerRequest::class)->getJson('fields') ?: $request->input('fields', []);
+		// An ABSENT selection must reach the resource as null: ActionResource::details() reads
+		// null as "use this resource's default includes" and any array — even an empty one — as
+		// an explicit selection that replaces them. Defaulting to [] here silently stripped every
+		// resource's default relations from a details call that named no fields.
+		// `??`, not `?:`: an explicitly empty selection decodes to [] and must stay one, rather
+		// than falling through to the raw, still-encoded input string.
+		$fields = app(PagerRequest::class)->getJson('fields') ?? request()->input('fields');
 
 		return static::$resource::details($model, $fields);
 	}
