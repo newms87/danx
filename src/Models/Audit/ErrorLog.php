@@ -7,6 +7,7 @@ use Exception;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\Log;
 use Monolog\Level;
 use Newms87\Danx\Audit\AuditDriver;
 use Newms87\Danx\Traits\HasDebugLogging;
@@ -29,6 +30,12 @@ class ErrorLog extends Model
 		EMERGENCY = 600;
 
 	const int MAX_MESSAGE_SIZE = 512;
+
+	/**
+	 * Log-record context key marking a line whose error this class has already recorded.
+	 * AuditLogHandler skips recording such a line; see logException().
+	 */
+	const string RECORDED_CONTEXT_KEY = 'error_log_recorded';
 
 	// Cap these messages to 10 MB
 	const int MAX_FULL_MESSAGE_SIZE = 1024 * 1024 * 10;
@@ -220,8 +227,16 @@ class ErrorLog extends Model
 			self::logException($level, $previous, [], $errorLog);
 		}
 
+		// Write the line to the log channel, so an exception recorded by a direct call
+		// (AuditingMiddleware, ActionController) still shows in the request's log. The context
+		// flag tells AuditLogHandler it is already recorded: without it the handler recorded
+		// it again, doubling `count` and the entries and, for a chained link logged at a level
+		// other than ERROR, adding a parentless orphan row.
 		if ($errorLog) {
-			static::logError("$errorLog: $errorLog->message", ['exception' => $exception]);
+			Log::error("[ErrorLog] $errorLog: $errorLog->message", [
+				'exception'                => $exception,
+				self::RECORDED_CONTEXT_KEY => true,
+			]);
 		}
 
 		return $errorLog;
@@ -280,15 +295,54 @@ class ErrorLog extends Model
 		]);
 	}
 
+	/**
+	 * The grouping key: every occurrence with the same hash is one ErrorLog row, its `count`
+	 * incremented and an entry added.
+	 *
+	 * An exception is identified by its stack trace. A message has no trace, so it is
+	 * identified by its text up to the first colon — after normalizeMessageForGrouping() has
+	 * replaced its ids, names and numbers, so the same message about two different records is
+	 * one ErrorLog, not one per record.
+	 */
 	public function generateHash(): string
 	{
 		if ($this->stack_trace) {
 			$id = json_encode($this->stack_trace);
 		} else {
-			$id = explode(':', $this->message)[0];
+			$id = explode(':', static::normalizeMessageForGrouping($this->message))[0];
 		}
 
 		return md5(base64_encode("$this->error_class:::$this->level:::$this->code:::$this->file:::$this->line:::$id"));
+	}
+
+	/**
+	 * A message with its variable parts replaced by placeholders, for grouping.
+	 *
+	 * "[ApiLog] Failed <ApiLog id='19149' GET 401 https://…>: …" and the same line for ApiLog
+	 * 19150 must be one ErrorLog. Before this, the key was the raw text before the first
+	 * colon, and nearly every message carries a record name, id or URL before any colon —
+	 * so each occurrence became its own row and `count` never grew.
+	 *
+	 * Replaced, in order: a model's __toString() (`<Class …>` keeps only the class), UUIDs,
+	 * quoted values, long hex ids, then every remaining number. Unquoted words are left alone,
+	 * so wording that differs — including an unquoted object type — stays apart.
+	 */
+	public static function normalizeMessageForGrouping(string $message): string
+	{
+		$placeholders = [
+			'/<([A-Za-z_][\w\\\\]*)\s[^<>]*>/'                                         => '<$1>',
+			'/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i'    => '{uuid}',
+			// A quote opens where no word character precedes it and closes where none follows,
+			// so the apostrophes in "can't" and "model's" are not quotes and 'O'Brien' is one value.
+			"/(?<!\\w)'.*?'(?!\\w)/"                                                   => "'?'",
+			'/(?<!\w)".*?"(?!\w)/'                                                     => '"?"',
+			'/`.*?`/'                                                                  => '`?`',
+			// At least one digit, so an ordinary word made of hex letters survives.
+			'/\b(?=[0-9a-f]*\d)[0-9a-f]{8,}\b/i'                                      => '{hex}',
+			'/\d+(?:\.\d+)*/'                                                          => 'N',
+		];
+
+		return preg_replace(array_keys($placeholders), array_values($placeholders), $message);
 	}
 
 	public function entries(): HasMany|ErrorLogEntry

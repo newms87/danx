@@ -3,11 +3,17 @@
 namespace Tests\Unit\Logging;
 
 use Exception;
+use GuzzleHttp\Exception\RequestException;
+use GuzzleHttp\Psr7\Request;
+use GuzzleHttp\Psr7\Response;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use Monolog\Handler\TestHandler;
 use Monolog\Level;
 use Monolog\Logger;
 use Newms87\Danx\Logging\Audit\AuditLogLogger;
+use Newms87\Danx\Models\Audit\ApiLog;
 use Newms87\Danx\Models\Audit\ErrorLog;
 use Newms87\Danx\Models\Audit\ErrorLogEntry;
 use Newms87\Danx\Traits\HasDebugLogging;
@@ -178,15 +184,130 @@ class AuditLogHandlerErrorRecordingTest extends TestCase
         // When
         ErrorLog::logException(ErrorLog::ERROR, $exception);
 
-        // Then - both links are recorded, each at the declared integer level. (The chained
-        // row is located by its parent: logException() also re-logs each link through the
-        // log channel, which records the inner exception a second time, parentless, at the
-        // channel's level — pre-existing behaviour this test does not pin.)
+        // Then - both links are recorded, each at the declared integer level
         $outer = ErrorLog::where('error_class', CriticalLevelException::class)->sole();
         $inner = ErrorLog::where('parent_id', $outer->id)->sole();
         $this->assertEquals(ErrorLog::CRITICAL, (int)$outer->level);
         $this->assertEquals(Exception::class, $inner->error_class);
         $this->assertEquals(ErrorLog::CRITICAL, (int)$inner->level);
+    }
+
+    public function test_directly_logged_exception_is_recorded_once(): void
+    {
+        // When - the direct call AuditingMiddleware and ActionController make
+        ErrorLog::logException(ErrorLog::ERROR, new Exception('Request blew up'));
+
+        // Then - seen once, one entry. logException() used to re-log the exception through the
+        // log channel, and AuditLogHandler recorded it a second time: count 2, two entries.
+        $errorLog = ErrorLog::sole();
+        $this->assertEquals(1, (int)$errorLog->count);
+        $this->assertEquals(1, ErrorLogEntry::where('error_log_id', $errorLog->id)->count());
+    }
+
+    public function test_directly_logged_exception_chain_records_each_link_once_and_no_orphan(): void
+    {
+        // Given - a chain whose outer link declares a level other than the channel's ERROR
+        $exception = new CriticalLevelException('Outer', 0, new Exception('Inner'));
+
+        // When
+        ErrorLog::logException(ErrorLog::ERROR, $exception);
+
+        // Then - exactly the two links, the inner one parented. The channel re-log used to
+        // record the inner exception again, parentless, at ERROR: a third, orphan row.
+        $this->assertEquals(2, ErrorLog::count());
+        $outer = ErrorLog::where('error_class', CriticalLevelException::class)->sole();
+        $inner = ErrorLog::where('error_class', Exception::class)->sole();
+        $this->assertEquals($outer->id, $inner->parent_id);
+        $this->assertEquals([1, 1], [(int)$outer->count, (int)$inner->count]);
+        $this->assertEquals(2, ErrorLogEntry::count());
+    }
+
+    public function test_directly_logged_exception_still_writes_its_log_line(): void
+    {
+        // Given - a handler that captures what reaches the channel
+        $captured = new TestHandler();
+        Log::channel('auditlog')->getLogger()->pushHandler($captured);
+
+        // When
+        ErrorLog::logException(ErrorLog::ERROR, new Exception('Request blew up'));
+
+        // Then - the line a request's log shows is still written, once
+        $this->assertCount(1, $captured->getRecords());
+        $this->assertTrue($captured->hasErrorThatContains('Request blew up'));
+    }
+
+    public function test_message_errors_differing_only_in_ids_names_and_numbers_group_into_one_error_log(): void
+    {
+        // Given - production message shapes, each pair differing only in its variable parts
+        $pairs = [
+            'quoted name' => [
+                "[ArrayIdentityProcessor] Extracted Professional 'Edgar' belongs to none of the parent records this extraction offered, so it is persisted with no parent and flagged.",
+                "[ArrayIdentityProcessor] Extracted Professional 'Dr. Jane O'Brien' belongs to none of the parent records this extraction offered, so it is persisted with no parent and flagged.",
+            ],
+            'model toString' => [
+                "[ApiLog] Failed <ApiLog id='19149' GET 401 https://api.github.com/repos/newms87/gpt-manager/commits?since=2026-08-05>: Client error: `GET https://api.github.com/repos/newms87/gpt-manager/commits?since=2026-08-05` resulted in a `401 Unauthorized` response",
+                "[ApiLog] Failed <ApiLog id='22738' GET 401 https://api.github.com/repos/newms87/gpt-manager/commits?since=2026-08-06>: Client error: `GET https://api.github.com/repos/newms87/gpt-manager/commits?since=2026-08-06` resulted in a `401 Unauthorized` response",
+            ],
+            'hash id' => [
+                '[ExtractIdentityTaskWorkerDefinition] Identity extraction artifact: TeamObject #1762 no longer exists',
+                '[ExtractIdentityTaskWorkerDefinition] Identity extraction artifact: TeamObject #1555 no longer exists',
+            ],
+            'bare numbers before any colon' => [
+                'Failed to mark JobDispatch 123 as timed out after 30s',
+                'Failed to mark JobDispatch 98765 as timed out after 600.5s',
+            ],
+            'uuid' => [
+                'Sandbox 9fcbb2d0-30aa-4e23-a9a1-8847f00fc493 could not be provisioned',
+                'Sandbox 0b4e7a31-5c2d-4f8e-9a6b-1d3c5e7f9a2b could not be provisioned',
+            ],
+            'apostrophes inside words are not quotes' => [
+                "The model's answer for 'Edgar' can't be read",
+                "The model's answer for 'Bob' can't be read",
+            ],
+        ];
+
+        // When
+        foreach($pairs as [$first, $second]) {
+            $this->logger->error($first);
+            $this->logger->error($second);
+        }
+
+        // Then - one row per pair, seen twice, keeping the first message verbatim
+        $this->assertEquals(count($pairs), ErrorLog::count());
+
+        foreach(array_values($pairs) as $index => [$first]) {
+            $errorLog = ErrorLog::orderBy('id')->skip($index)->first();
+            $this->assertEquals(substr($first, 0, ErrorLog::MAX_MESSAGE_SIZE), $errorLog->message);
+            $this->assertEquals(2, (int)$errorLog->count, $errorLog->message);
+            $this->assertEquals(2, ErrorLogEntry::where('error_log_id', $errorLog->id)->count());
+        }
+    }
+
+    public function test_a_failed_api_attempt_logs_a_warning_and_records_no_error(): void
+    {
+        // Given - a handler that captures what reaches the channel, and one failed attempt
+        $captured = new TestHandler();
+        Log::channel('auditlog')->getLogger()->pushHandler($captured);
+        $failure = RequestException::create(new Request('GET', 'https://api.example.invalid/things'), new Response(401));
+
+        // When - the per-attempt hook Api calls; the call as a whole throws separately
+        ApiLog::logResponseError(new ApiLog(['method' => 'GET', 'url' => 'https://api.example.invalid/things']), $failure);
+
+        // Then
+        $this->assertTrue($captured->hasWarningThatContains('Failed <ApiLog'));
+        $this->assertEquals(0, ErrorLog::count());
+    }
+
+    public function test_message_errors_that_say_different_things_stay_apart(): void
+    {
+        // When - different wording, and the same wording about different (unquoted) object types
+        $this->logger->error('Directive has no schema');
+        $this->logger->error('Schema has no directive');
+        $this->logger->error("Extracted Vehicle 'A' belongs to none of the parent records");
+        $this->logger->error("Extracted Professional 'A' belongs to none of the parent records");
+
+        // Then
+        $this->assertEquals(4, ErrorLog::count());
     }
 
     public function test_level_enum_is_normalized_to_its_integer_value(): void

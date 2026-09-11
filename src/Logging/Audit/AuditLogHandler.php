@@ -90,7 +90,8 @@ class AuditLogHandler extends AbstractProcessingHandler
 	 *
 	 * A line carrying an exception is recorded by ErrorLog::logException() (which keeps
 	 * anything above INFO); a message-only line is recorded by ErrorLog::logErrorMessage()
-	 * when its level is ERROR or higher.
+	 * when its level is ERROR or higher. A line flagged ErrorLog::RECORDED_CONTEXT_KEY is the
+	 * one logException() writes after recording the error itself, so it is not recorded again.
 	 *
 	 * $record->level is a Monolog\Level enum. Compare its ->value (or use the enum's own
 	 * isLowerThan()/includes()), never the enum itself against an int: PHP evaluates
@@ -125,6 +126,11 @@ class AuditLogHandler extends AbstractProcessingHandler
 				foreach ($auditRequest->ranJobs as $jobDispatch) {
 					JobDispatchUpdatedEvent::dispatch($jobDispatch, 'updated');
 				}
+			}
+
+			if (!empty($record->context[ErrorLog::RECORDED_CONTEXT_KEY])) {
+				// ErrorLog::logException() wrote this line after recording the error itself
+				return;
 			}
 
 			if ($exception) {

@@ -105,10 +105,15 @@ class ApiLog extends Model
     /**
      * Log API request completion (for any non-timeout error)
      * Ensures finished_at is always set for proper run_time_ms calculation
+     *
+     * Logged at WARNING, not ERROR: this runs once per failed ATTEMPT, including attempts a
+     * retry or a hedge sibling then recovers from. When the call as a whole fails, Api throws
+     * (executeCall()'s `throw $lastException`, or buildHedgeFailureException()), and that
+     * exception is what records the error. This row keeps the attempt's status and response.
      */
     public static function logResponseError(ApiLog $apiLog, Throwable $exception, $errorType = 'request_error'): void
     {
-        static::logError("Failed $apiLog: " . StringHelper::logSafeString($exception->getMessage()));
+        static::logWarning("Failed $apiLog: " . StringHelper::logSafeString($exception->getMessage()));
 
         // Extract the full response body from the exception when available.
         // Guzzle's exception message truncates response bodies to 120 chars,
