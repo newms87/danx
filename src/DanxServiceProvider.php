@@ -3,6 +3,8 @@
 namespace Newms87\Danx;
 
 use Illuminate\Console\Events\CommandStarting;
+use Illuminate\Queue\Events\JobProcessed;
+use Illuminate\Queue\Events\JobProcessing;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 use Newms87\Danx\Console\Commands\AuditDebugCommand;
@@ -19,6 +21,7 @@ use Newms87\Danx\Http\Controllers\JobDispatchController;
 use Newms87\Danx\Http\Controllers\StoredFileController;
 use Newms87\Danx\Http\Routes\ActionRoute;
 use Newms87\Danx\Listeners\LogCommandExecution;
+use Newms87\Danx\Listeners\ReleaseAuditRequestAtJobBoundary;
 use Newms87\Danx\Models\Audit\AuditRequest;
 use Newms87\Danx\Support\SignalHandler;
 use Newms87\Danx\Traits\HasRelationCountersTrait;
@@ -30,6 +33,7 @@ class DanxServiceProvider extends ServiceProvider
     public function boot()
     {
         Event::listen(CommandStarting::class, LogCommandExecution::class);
+        Event::listen([JobProcessing::class, JobProcessed::class], ReleaseAuditRequestAtJobBoundary::class);
 
         SignalHandler::register();
 

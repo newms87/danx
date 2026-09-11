@@ -226,6 +226,20 @@ class AuditDriver implements AuditDriverContract
 	}
 
 	/**
+	 * Stop attributing anything to the current audit request: the next log line, API log, error
+	 * or audit creates (or is handed) an audit request of its own.
+	 *
+	 * The current audit request is a static, so in a process that outlives one unit of work — a
+	 * queue worker, a warm Vapor queue Lambda — it outlives that unit too. Called at the boundaries
+	 * of every job a queue worker runs ({@see \Newms87\Danx\Listeners\ReleaseAuditRequestAtJobBoundary})
+	 * and before a danx Job binds its own ({@see Job::__unserialize()}).
+	 */
+	public static function releaseAuditRequest(): void
+	{
+		self::$auditRequest = null;
+	}
+
+	/**
 	 * Create a child audit request parented to the given audit request ID.
 	 * Used by ProcessFork to give each forked child its own isolated audit context.
 	 *

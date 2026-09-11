@@ -196,7 +196,7 @@ abstract class Job implements ShouldQueue
     public function __unserialize(array $values)
     {
         // Reset the audit request as we want to treat each job as a new request
-        AuditDriver::$auditRequest = null;
+        AuditDriver::releaseAuditRequest();
         AuditDriver::startTimer();
         // Let other parts of the system know we're running inside a Job
         self::$isRunning = true;
