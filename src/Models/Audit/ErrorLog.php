@@ -7,6 +7,7 @@ use Exception;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Monolog\Level;
 use Newms87\Danx\Audit\AuditDriver;
 use Newms87\Danx\Traits\HasDebugLogging;
 use Newms87\Danx\Helpers\StringHelper;
@@ -79,6 +80,28 @@ class ErrorLog extends Model
 			'EMERGENCY' => self::EMERGENCY,
 			default => 0,
 		};
+	}
+
+	/**
+	 * Normalize any level representation to the integer every comparison and every
+	 * error_logs.level value in this class uses: a Monolog\Level enum (its ->value), an int,
+	 * a numeric string, or a level name in any case ('error', 'ERROR').
+	 *
+	 * Exists because comparing a Monolog\Level enum against an int is always false in PHP,
+	 * and passing a level NAME where an int is typed throws a TypeError — both of which have
+	 * shipped here. Convert at the boundary, then compare ints.
+	 */
+	public static function normalizeLevel(int|string|Level $level): int
+	{
+		if ($level instanceof Level) {
+			return $level->value;
+		}
+
+		if (is_numeric($level)) {
+			return (int)$level;
+		}
+
+		return self::getLevelInt(strtoupper($level));
 	}
 
 	/**
@@ -159,9 +182,11 @@ class ErrorLog extends Model
 			return null;
 		}
 
-		// Override the exception logging level if it is set
+		// Override the exception logging level if it is set. It must stay an int: it is stored
+		// as error_logs.level and passed back into this int-typed method for the previous
+		// exception, so a level NAME here would throw a TypeError on any chained exception.
 		if (isset($exception::$level)) {
-			$level = self::getLevelName($exception::$level);
+			$level = self::normalizeLevel($exception::$level);
 		}
 
 		$message = StringHelper::safeConvertToUTF8($exception->getMessage());

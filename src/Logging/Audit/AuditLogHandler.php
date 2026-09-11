@@ -85,14 +85,25 @@ class AuditLogHandler extends AbstractProcessingHandler
 	}
 
 	/**
-	 * Perform the actual write operation
+	 * Perform the actual write operation: append the line to the current AuditRequest's
+	 * logs, then record it in error_logs when it is an error.
+	 *
+	 * A line carrying an exception is recorded by ErrorLog::logException() (which keeps
+	 * anything above INFO); a message-only line is recorded by ErrorLog::logErrorMessage()
+	 * when its level is ERROR or higher.
+	 *
+	 * $record->level is a Monolog\Level enum. Compare its ->value (or use the enum's own
+	 * isLowerThan()/includes()), never the enum itself against an int: PHP evaluates
+	 * `int >= Level::Error` as false for every int, which is exactly how message-only
+	 * errors silently stopped being recorded.
 	 */
 	protected function doWrite(LogRecord $record): void
 	{
 		$formatted = $record['formatted'];
 
 		if ($formatted) {
-			$level     = $record['level_name'];
+			$level     = $record->level->getName();
+			$levelInt  = $record->level->value;
 			$message   = $formatted['message'];
 			$exception = $formatted['exception'];
 
@@ -116,12 +127,10 @@ class AuditLogHandler extends AbstractProcessingHandler
 				}
 			}
 
-			$levelInt = ErrorLog::getLevelInt($level);
-
 			if ($exception) {
 				ErrorLog::logException($levelInt, $exception);
-			} elseif ($levelInt >= Level::Error) {
-				ErrorLog::logErrorMessage($level, $message);
+			} elseif (!$record->level->isLowerThan(Level::Error)) {
+				ErrorLog::logErrorMessage($levelInt, $message);
 			}
 		}
 	}
