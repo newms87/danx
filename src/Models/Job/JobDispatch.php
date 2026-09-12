@@ -30,6 +30,7 @@ class JobDispatch extends Model
         'ref',
         'name',
         'count',
+        'available_at',
         'ran_at',
         'completed_at',
         'will_timeout_at',
@@ -41,10 +42,11 @@ class JobDispatch extends Model
     protected $table = 'job_dispatch';
 
     protected $casts = [
-        'ran_at'       => 'datetime',
-        'completed_at' => 'datetime',
+        'available_at'    => 'datetime',
+        'ran_at'          => 'datetime',
+        'completed_at'    => 'datetime',
         'will_timeout_at' => 'datetime',
-        'data'         => 'json',
+        'data'            => 'json',
     ];
 
     public function user(): BelongsTo

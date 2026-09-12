@@ -3,6 +3,8 @@
 namespace Newms87\Danx\Jobs;
 
 use Carbon\Carbon;
+use DateInterval;
+use DateTimeInterface;
 use Exception;
 use Illuminate\Bus\Batchable;
 use Illuminate\Bus\Dispatcher;
@@ -14,13 +16,13 @@ use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
 use Newms87\Danx\Audit\AuditDriver;
-use Newms87\Danx\Traits\HasDebugLogging;
 use Newms87\Danx\Helpers\DateHelper;
 use Newms87\Danx\Helpers\FileHelper;
 use Newms87\Danx\Helpers\LockHelper;
 use Newms87\Danx\Models\Job\JobBatch;
 use Newms87\Danx\Models\Job\JobDispatch;
 use Newms87\Danx\Support\Heartbeat;
+use Newms87\Danx\Traits\HasDebugLogging;
 use ReflectionClass;
 use Throwable;
 
@@ -71,8 +73,7 @@ abstract class Job implements ShouldQueue
      */
     public function resolveJobDispatch()
     {
-        $ref  = $this->ref();
-        $name = class_basename(static::class);
+        $ref = $this->ref();
 
         try {
             LockHelper::acquire('resolve-' . $ref);
@@ -99,12 +100,7 @@ abstract class Job implements ShouldQueue
             }
 
             if (!$jobDispatch->exists) {
-                $jobDispatch->forceFill([
-                    'user_id'         => user()?->id ?: null,
-                    'name'            => $name,
-                    'count'           => 1,
-                    'will_timeout_at' => $this->getTimeoutAt(),
-                ])->save();
+                $jobDispatch = $this->createPendingDispatch($ref, 1, null);
             }
 
             if (config('danx.audit.enabled')) {
@@ -119,6 +115,40 @@ abstract class Job implements ShouldQueue
         } finally {
             LockHelper::release('resolve-' . $ref);
         }
+    }
+
+    /**
+     * Insert the Pending row a new dispatch of $ref runs as. Called only while holding the
+     * `resolve-<ref>` lock, which serialises every resolution of a ref.
+     */
+    private function createPendingDispatch(string $ref, int $count, ?string $jobBatchId): JobDispatch
+    {
+        $jobDispatch = JobDispatch::make([
+            'ref'    => $ref,
+            'status' => JobDispatch::STATUS_PENDING,
+        ]);
+
+        $jobDispatch->forceFill([
+            'user_id'         => user()?->id ?: null,
+            'name'            => class_basename(static::class),
+            'count'           => $count,
+            'job_batch_id'    => $jobBatchId,
+            'will_timeout_at' => $this->getTimeoutAt(),
+        ])->save();
+
+        return $jobDispatch;
+    }
+
+    /**
+     * When this dispatch's message becomes deliverable: now, or the end of its ->delay().
+     */
+    public function availableAt(): Carbon
+    {
+        return match (true) {
+            $this->delay instanceof DateTimeInterface => Carbon::instance($this->delay)->max(now()),
+            $this->delay instanceof DateInterval      => now()->add($this->delay),
+            default                                   => now()->addSeconds((int)($this->delay ?? 0)),
+        };
     }
 
     /**
@@ -138,6 +168,12 @@ abstract class Job implements ShouldQueue
      * job is still Pending, it will be considered a duplicate and will not be executed. However, if a job is
      * dispatched while a duplicate job is Running, we will allow it to run as it is possible changes have been made
      * since the job started running.
+     *
+     * INVARIANT: a dispatch never runs later than it asked to. Folding into the Pending row is allowed only when
+     * that row's message becomes deliverable no later than this dispatch's own would. A Pending row held back
+     * longer — queued with a ->delay() — is superseded instead (see supersedePendingDispatch()). Before this, a
+     * dispatch asking to run now inherited whatever delay the Pending row was queued with (gpt-manager SG-495:
+     * 13 worker completions folded into one TaskOrchestratorJob queued 600 s out, and the run sat idle).
      */
     public function dispatch($now = false): static
     {
@@ -159,15 +195,9 @@ abstract class Job implements ShouldQueue
                 return $this;
             }
 
-            $dispatcher = app(Dispatcher::class);
-
-            // If this job is not supposed to be added to the Job Queue, then we want to dispatch it immediately
-            if ($now || config('queue.default') === 'sync') {
-                $dispatcher->dispatchSync($this);
-            } else {
-                $this->jobDispatch->update(['will_timeout_at' => $this->getTimeoutAt()]);
-                app(Dispatcher::class)->dispatch($this->job ?: $this);
-            }
+            $this->send($now);
+        } elseif ($this->isHeldBackLongerThanAsked($this->jobDispatch, $now)) {
+            $this->supersedePendingDispatch($now);
         } else {
             // Increment the counter to indicate the number of debounced jobs
             $this->jobDispatch->update(['count' => $this->jobDispatch->count + 1]);
@@ -178,6 +208,82 @@ abstract class Job implements ShouldQueue
         }
 
         return $this;
+    }
+
+    /**
+     * Run this dispatch's row: inline when it must run now (or the queue is sync), otherwise queue its message,
+     * stamping when that message becomes deliverable.
+     */
+    private function send(bool $now): void
+    {
+        $dispatcher = app(Dispatcher::class);
+
+        // If this job is not supposed to be added to the Job Queue, then we want to dispatch it immediately
+        if ($now || config('queue.default') === 'sync') {
+            $dispatcher->dispatchSync($this);
+        } else {
+            $this->jobDispatch->update([
+                'available_at'    => $this->availableAt(),
+                'will_timeout_at' => $this->getTimeoutAt(),
+            ]);
+            $dispatcher->dispatch($this->job ?: $this);
+        }
+    }
+
+    /**
+     * Whether $jobDispatch is a Pending row whose message becomes deliverable later than this dispatch asks to run.
+     * A row with no recorded available_at (never queued) holds nothing back.
+     */
+    private function isHeldBackLongerThanAsked(JobDispatch $jobDispatch, bool $now): bool
+    {
+        if ($jobDispatch->status !== JobDispatch::STATUS_PENDING || !$jobDispatch->available_at) {
+            return false;
+        }
+
+        return $jobDispatch->available_at->greaterThan($now ? now() : $this->availableAt());
+    }
+
+    /**
+     * Replace the ref's Pending row, held back by a delay longer than this dispatch asked for, with a fresh Pending
+     * row sent on this dispatch's own timing. The held-back row is Aborted, so its message is skipped when it is
+     * eventually delivered (see handle()). The replacement carries the debounce count and JobBatch membership.
+     *
+     * Runs under the `resolve-<ref>` lock that serialises every resolution of the ref, re-reading the row first: a
+     * concurrent dispatch may have superseded or started it since this job resolved it. When it no longer holds
+     * anything back, this dispatch resolves again against whatever row now holds the ref.
+     */
+    private function supersedePendingDispatch(bool $now): void
+    {
+        $ref      = $this->jobDispatch->ref;
+        $heldBack = $this->jobDispatch;
+
+        LockHelper::acquire('resolve-' . $ref);
+
+        try {
+            $heldBack->refresh();
+
+            if ($this->isHeldBackLongerThanAsked($heldBack, $now)) {
+                $heldBack->update(['status' => JobDispatch::STATUS_ABORTED]);
+                $this->jobDispatch = $this->createPendingDispatch($ref, $heldBack->count + 1, $heldBack->job_batch_id);
+
+                if (config('danx.audit.enabled')) {
+                    $this->jobDispatch->update(['dispatch_audit_request_id' => AuditDriver::getAuditRequest()?->id]);
+                }
+            }
+        } finally {
+            LockHelper::release('resolve-' . $ref);
+        }
+
+        if ($this->jobDispatch === $heldBack) {
+            $this->resolveJobDispatch();
+            $this->dispatch($now);
+
+            return;
+        }
+
+        static::logDebug("Superseded $heldBack, held back until {$heldBack->available_at}, with $this->jobDispatch");
+
+        $this->send($now);
     }
 
     /**
@@ -355,15 +461,24 @@ abstract class Job implements ShouldQueue
 
         DateHelper::timerReset(static::class);
 
-        $ref     = $this->ref();
-        $prefix  = '######';
-        $jobName = "({$this->jobDispatch->id}) --- $ref";
+        $ref         = $this->ref();
+        $prefix      = '######';
+        $jobName     = "({$this->jobDispatch->id}) --- $ref";
         $traceStatus = Cache::get('debug:trace_enabled') ? 'TRACE' : 'DEBUG';
         static::logDebug("$prefix Handling  $jobName (log level: $traceStatus)");
 
         $jobBatch = $this->jobDispatch->jobBatch;
 
         try {
+            // An Aborted dispatch never runs. A message can still arrive for one: dispatch() aborts a Pending row
+            // held back by a delay when a later dispatch supersedes it, and the row's delayed message is delivered
+            // afterwards. The replacement row does the work, and settles any JobBatch this row belonged to.
+            if ($this->jobDispatch->status === JobDispatch::STATUS_ABORTED) {
+                static::logDebug("$prefix Skipped   $jobName --- aborted before it ran");
+
+                return;
+            }
+
             $this->executeJob();
             if ($jobBatch) {
                 $this->settleJobBatch($jobBatch, failed: false);
