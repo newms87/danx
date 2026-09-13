@@ -12,6 +12,7 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Database\ModelIdentifier;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\Jobs\SyncJob;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
@@ -44,6 +45,23 @@ abstract class Job implements ShouldQueue
      * owner-checked, since the executing process's own `$acquiredLocks` never held it.
      */
     protected ?string $dispatchLockOwner = null;
+
+    /**
+     * Whoever was authenticated in THIS process before __unserialize() logged in as this job's
+     * own user/team — captured there, consumed by restoreCallerAuthContext() (SG-494).
+     *
+     * Only meaningful for a job that ran SYNCHRONOUSLY (see restoreCallerAuthContext()): a real
+     * queue worker process has no caller of its own, so this is captured unconditionally
+     * (a cheap property read) but only ever acted on for a SyncJob.
+     */
+    private $callerAuthUser = null;
+
+    /**
+     * Whether __unserialize() has run and captured $callerAuthUser for THIS instance. Needed
+     * because "no one was authenticated" and "not captured yet" are both represented by a null
+     * $callerAuthUser, and only the former should trigger a logout on restore.
+     */
+    private bool $callerAuthCaptured = false;
 
     // Log out previous authenticated user before running the job
     // NOTE: This is disabled during testing, so we can run jobs as the authenticated user
@@ -336,6 +354,15 @@ abstract class Job implements ShouldQueue
             }
         }
 
+        // Capture whoever was authenticated in THIS process BEFORE we log in as the job's own
+        // user/team below, so a job that runs SYNCHRONOUSLY (inline, in the caller's own
+        // request/command process) can hand control back when it finishes. See
+        // restoreCallerAuthContext() -- the actual restore only happens for a SyncJob; this
+        // capture is unconditional (cheap) since __unserialize() runs exactly once, before we
+        // know yet whether $this->job will turn out to be a SyncJob or a real queue delivery.
+        $this->callerAuthUser     = Auth::guard()->user();
+        $this->callerAuthCaptured = true;
+
         // Set up user/team context BEFORE creating AuditRequest
         // This ensures team() returns the correct team when AuditRequest is created
         $user = $this->jobDispatch?->user()->first();
@@ -383,6 +410,14 @@ abstract class Job implements ShouldQueue
                 continue;
             }
 
+            // Already captured above, from THIS process's live auth state -- must never be
+            // overwritten by the value serialized at dispatch time, which is always the
+            // property's unset default (null / false), since capture only happens here in
+            // __unserialize(), long after the job object was serialized for the queue.
+            if ($name === 'callerAuthUser' || $name === 'callerAuthCaptured') {
+                continue;
+            }
+
             if ($property->isPrivate()) {
                 $name = "\0{$class}\0{$name}";
             } elseif ($property->isProtected()) {
@@ -412,6 +447,36 @@ abstract class Job implements ShouldQueue
         }
 
         AuditDriver::$auditRequest?->update(['request' => $values]);
+    }
+
+    /**
+     * Hand auth back to whoever was authenticated before __unserialize() logged in as this job's
+     * own user/team (SG-494).
+     *
+     * Only takes effect for a job that ran SYNCHRONOUSLY -- inline, in an existing
+     * request/command/test process -- which today means $this->job resolved to a real
+     * Illuminate\Queue\Jobs\SyncJob (danx's own dispatchSync() path in send(), or any dispatch on
+     * the `sync` queue connection). $this->job is set by Illuminate\Queue\CallQueuedHandler
+     * BEFORE handle() runs, so it correctly reflects the underlying queue driver by the time this
+     * is called. That is the only case where "the caller" is a real, meaningful identity that the
+     * rest of the SAME process must not silently lose -- see the class-level incident this fixes.
+     *
+     * A real queue worker process (Redis/SQS/database -- anything but SyncJob) is deliberately
+     * left untouched: it is a dedicated loop with no caller of its own to hand back to, and every
+     * subsequent job's own __unserialize() overwrites the guard again regardless, so leaving the
+     * job's own user set between jobs there is the existing, correct behavior.
+     */
+    private function restoreCallerAuthContext(): void
+    {
+        if (!$this->callerAuthCaptured || !($this->job instanceof SyncJob)) {
+            return;
+        }
+
+        if ($this->callerAuthUser) {
+            Auth::guard()->setUser($this->callerAuthUser);
+        } else {
+            Auth::guard()->forgetUser();
+        }
     }
 
     /**
@@ -526,6 +591,11 @@ abstract class Job implements ShouldQueue
 
             // Reset the running job reference so subsequent code doesn't think we're still in a job
             self::$runningJob = null;
+
+            // Hand auth back to the caller (sync execution only) -- must run AFTER $runningJob is
+            // cleared above, since the team() helper special-cases a still-set $runningJob (see
+            // its docblock) and would otherwise re-pin the restored caller onto this job's team.
+            $this->restoreCallerAuthContext();
         }
     }
 
