@@ -2,12 +2,28 @@
 
 namespace Newms87\Danx\Resources\Audit;
 
+use Illuminate\Database\Eloquent\Model;
 use Newms87\Danx\Models\Audit\AuditRequest;
 use Newms87\Danx\Resources\ActionResource;
 use Newms87\Danx\Resources\Job\JobDispatchResource;
 
 class AuditRequestResource extends ActionResource
 {
+    /**
+     * A details() call that names no fields defaults to this row's own columns only —
+     * no ApiLogs, audits, jobs, errors or children. Those are all closures (see data()
+     * below and ActionResource::make()'s laziness rule: a callable field is included
+     * only when explicitly named), so the base ActionResource::details() default of
+     * ['*' => true] would force every one of them on, including every ApiLog's full
+     * request/response bodies. One production AuditRequest exceeded 6MB that way,
+     * over Lambda's response limit (SG-485). Callers that need a relation ask for it
+     * by name, e.g. static::details($auditRequest, ['api_logs' => true]).
+     */
+    public static function details(Model $model, ?array $includeFields = null): array
+    {
+        return static::make($model, $includeFields ?? []);
+    }
+
     /**
      * Traces the ancestor chain from the given audit request up to the root.
      * Returns an ordered array of audit request IDs from root to the current request (inclusive).
@@ -74,7 +90,7 @@ class AuditRequestResource extends ActionResource
             'response'              => $auditRequest->response,
             'response_length'       => $auditRequest->response ? $auditRequest->response['length'] : 0,
             'max_memory'            => $auditRequest->response ? $auditRequest->response['max_memory_used'] : 0,
-            'logs'                  => $auditRequest->logs,
+            'logs'                  => fn() => $auditRequest->logs,
             'time'                  => $auditRequest->time,
             'audits_count'          => $auditRequest->audits()->count(),
             'api_logs_count'        => $auditRequest->apiLogs()->count(),

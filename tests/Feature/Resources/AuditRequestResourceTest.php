@@ -2,19 +2,73 @@
 
 namespace Tests\Feature\Resources;
 
+use Newms87\Danx\Models\Audit\ApiLog;
 use Newms87\Danx\Models\Audit\AuditRequest;
 use Newms87\Danx\Models\Job\JobDispatch;
 use Newms87\Danx\Resources\Audit\AuditRequestResource;
 use Tests\TestCase;
 
 /**
- * Tests for AuditRequestResource::resolveAncestorIds().
+ * Tests for AuditRequestResource::resolveAncestorIds() and its details() default shape.
  *
  * Verifies the ancestor chain traversal via direct parent_id links
  * and the legacy JobDispatch fallback for older audit requests.
  */
 class AuditRequestResourceTest extends TestCase
 {
+    /**
+     * SG-485: a details() call naming no fields must return this row's own columns
+     * only — none of api_logs / audits / ran_jobs / dispatched_jobs / errors / children,
+     * and no logs text. Before this fix, ActionResource::details()'s base default of
+     * ['*' => true] forced every one of those on, and one production AuditRequest with
+     * its full ApiLog bodies included exceeded 6MB, over Lambda's response limit.
+     */
+    public function test_details_with_no_fields_defaults_to_no_relations_and_no_logs(): void
+    {
+        $auditRequest = AuditRequest::create([
+            'session_id'  => 'test-session',
+            'environment' => 'testing',
+            'url'         => '/parent',
+            'logs'        => str_repeat('log line' . PHP_EOL, 500),
+        ]);
+
+        ApiLog::factory()->forAuditRequest($auditRequest->id)->create();
+
+        $response = AuditRequestResource::details($auditRequest);
+
+        $this->assertArrayNotHasKey('logs', $response, 'logs must not be sent unless explicitly requested');
+        $this->assertArrayNotHasKey('api_logs', $response);
+        $this->assertArrayNotHasKey('audits', $response);
+        $this->assertArrayNotHasKey('ran_jobs', $response);
+        $this->assertArrayNotHasKey('dispatched_jobs', $response);
+        $this->assertArrayNotHasKey('errors', $response);
+        $this->assertArrayNotHasKey('children', $response);
+        // The row's own columns are still present
+        $this->assertSame('/parent', $response['url']);
+        $this->assertSame(1, $response['api_logs_count']);
+    }
+
+    /**
+     * A caller that explicitly asks for logs and api_logs still gets them —
+     * details() only changes what happens when nothing is requested.
+     */
+    public function test_details_with_explicit_fields_returns_the_named_relations(): void
+    {
+        $auditRequest = AuditRequest::create([
+            'session_id'  => 'test-session',
+            'environment' => 'testing',
+            'url'         => '/parent',
+            'logs'        => 'the log text',
+        ]);
+
+        ApiLog::factory()->forAuditRequest($auditRequest->id)->create();
+
+        $response = AuditRequestResource::details($auditRequest, ['logs' => true, 'api_logs' => true]);
+
+        $this->assertSame('the log text', $response['logs']);
+        $this->assertCount(1, $response['api_logs']);
+    }
+
     public function test_resolve_ancestor_ids_via_parent_id_chain(): void
     {
         // Given - a 3-level hierarchy: grandparent → parent → child

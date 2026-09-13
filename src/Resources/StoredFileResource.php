@@ -2,11 +2,26 @@
 
 namespace Newms87\Danx\Resources;
 
+use Illuminate\Database\Eloquent\Model;
 use Newms87\Danx\Models\Utilities\StoredFile;
 use Newms87\Danx\Services\TranscodeFileService;
 
 class StoredFileResource extends ActionResource
 {
+    /**
+     * A details() call that names no fields defaults to thumb + optimized only — not
+     * every transcode. `children` is a closure (see data() below) that returns every
+     * transcode row via ActionResource::collection(); the base ActionResource::details()
+     * default of ['*' => true] would force it on unconditionally. One local file with
+     * 488 transcodes serialized to 1.1MB that way (production tops out at 866). Callers
+     * that need the full transcode list ask for it by name, e.g.
+     * static::details($storedFile, ['children' => true]).
+     */
+    public static function details(Model $model, ?array $includeFields = null): array
+    {
+        return static::make($model, $includeFields ?? ['thumb' => true, 'optimized' => true]);
+    }
+
     public static function data(StoredFile $storedFile, array $includeFields = []): array
     {
         return [
