@@ -247,6 +247,31 @@ LUA;
 	}
 
 	/**
+	 * Attempt a lock for handoff to a DIFFERENT process, WITHOUT blocking — the non-blocking
+	 * sibling of {@see acquireForHandoff()}, for a caller that wants "is this already claimed?"
+	 * (a debounce / dedupe check) rather than "wait until it's free".
+	 *
+	 * Returns the owner token to carry to wherever {@see releaseByOwner()}/{@see extendByOwner()}
+	 * will run, or `null` if $key is already held by someone else. Deliberately does NOT populate
+	 * `$acquiredLocks` — this process is not the one that will release it.
+	 */
+	public static function tryAcquireForHandoff(Model|string $key, int $ttl = LockHelper::TTL): ?string
+	{
+		$model = $key instanceof Model ? $key : null;
+		$key   = self::resolveKey($key);
+		$owner = (string)Str::uuid();
+
+		if (!Cache::lock($key, $ttl, $owner)->get()) {
+			return null;
+		}
+
+		Log::debug("🔴🔒 ACQUIRED (for handoff, non-blocking): $key");
+		$model?->refresh();
+
+		return $owner;
+	}
+
+	/**
 	 * Re-set the TTL on an already-held lock without re-blocking, for the SAME process
 	 * that acquired it. Atomic and owner-checked (see {@see renewByOwner()}) — never the
 	 * old force-release-then-reacquire, which carried a real race window between the two

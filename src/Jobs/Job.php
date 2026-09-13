@@ -32,6 +32,19 @@ abstract class Job implements ShouldQueue
 
     protected ?JobDispatch $jobDispatch = null;
 
+    /**
+     * The owner token {@see dispatch()} mints when it takes the debounce lock on
+     * {@see JobDispatch::$ref} — carried across the dispatch -> execute process boundary on this
+     * SAME serialized job object (the same mechanism that already carries `$jobDispatch` there),
+     * and consumed by {@see executeJob()} to release that SAME lock via
+     * {@see LockHelper::releaseByOwner()}. See the "CROSS-PROCESS HANDOFF" section of
+     * {@see LockHelper}'s own docblock: the process that acquires this debounce lock is never the
+     * process that releases it, so a same-process `get()`/`release()` pair is the wrong primitive
+     * here — that pairing silently stopped releasing anything the moment `release()` became
+     * owner-checked, since the executing process's own `$acquiredLocks` never held it.
+     */
+    protected ?string $dispatchLockOwner = null;
+
     // Log out previous authenticated user before running the job
     // NOTE: This is disabled during testing, so we can run jobs as the authenticated user
     public static $logoutUser = true;
@@ -187,8 +200,13 @@ abstract class Job implements ShouldQueue
         // If the Job was recently created, then it is the first time it has been dispatched
         if ($this->jobDispatch->wasRecentlyCreated) {
             // If we cannot immediately acquire the lock, that means someone else is already doing what we're trying to do
-            // This will be released when the job is just about to execute, we are debouncing all other redundant requests
-            if (!LockHelper::get($this->jobDispatch->ref, 30)) {
+            // This will be released when the job is just about to execute, we are debouncing all other redundant requests.
+            // A cross-process handoff (this process acquires; the queue worker that later executes the job
+            // releases) — never same-process get()/release(), which only LOOKS like it works because the two
+            // sides share no memory to check ownership against.
+            $this->dispatchLockOwner = LockHelper::tryAcquireForHandoff($this->jobDispatch->ref, 30);
+
+            if ($this->dispatchLockOwner === null) {
                 static::logDebug("Job {$this->jobDispatch->ref} is already running");
                 $this->jobDispatch->update(['status' => JobDispatch::STATUS_ABORTED]);
 
@@ -620,9 +638,14 @@ abstract class Job implements ShouldQueue
             }
         }
 
-        // Release the lock when we are about to execute the job, so other jobs can stack up
-        // Anything attempting to run the same job is redundant before this point
-        LockHelper::release($this->jobDispatch->ref);
+        // Release the debounce lock when we are about to execute the job, so other jobs can stack up.
+        // Anything attempting to run the same job is redundant before this point. By owner, not
+        // same-process release(): this call very often runs in a DIFFERENT process than dispatch()'s
+        // (a queue worker picked this job up), carrying the owner token dispatch() minted via
+        // tryAcquireForHandoff() on this same serialized job object (see $dispatchLockOwner).
+        if ($this->dispatchLockOwner !== null) {
+            LockHelper::releaseByOwner($this->jobDispatch->ref, $this->dispatchLockOwner);
+        }
 
         // Run the Job and timestamp the run time
         $this->jobDispatch->update([
