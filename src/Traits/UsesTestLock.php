@@ -83,13 +83,22 @@ trait UsesTestLock
             return;
         }
 
-        $testLockService = new TestLockService(static::testLockKeyPrefix());
+        $testLockService = static::makeTestLockService();
         $testLockService->acquireLock();
 
         self::$testLockService  = $testLockService;
         self::$testLockAcquired = true;
 
         register_shutdown_function(static fn() => self::releaseTestLock());
+    }
+
+    /**
+     * Builds the lock service for this process. Override it to supply a different
+     * implementation, e.g. one that fails on demand in a test of this trait.
+     */
+    protected static function makeTestLockService(): TestLockService
+    {
+        return new TestLockService(static::testLockKeyPrefix());
     }
 
     /**

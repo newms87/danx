@@ -558,6 +558,52 @@ class ProcessForkTest extends TestCase
     }
 
     /**
+     * SG-623: a cancellation SIGTERM that arrives while a task is running must not throw
+     * that task's work away. SIGTERM is held until the child has written its result, so a
+     * task that finishes inside the grace period is reported as a success with its real
+     * return value. Before the fix, the child's handler exited on the spot and the parent
+     * recorded the task as Cancelled.
+     */
+    public function test_task_finishing_inside_the_grace_period_keeps_its_result_when_cancelled(): void
+    {
+        if (!function_exists('pcntl_fork')) {
+            $this->markTestSkipped('pcntl extension not available');
+        }
+
+        config(['danx.process_fork.sigterm_grace_seconds' => 3]);
+
+        $callCount      = 0;
+        $shouldContinue = function () use (&$callCount): bool {
+            $callCount++;
+
+            // Allow the fork, then cancel while both tasks are still mid-sleep.
+            return $callCount <= 1;
+        };
+
+        $results = ProcessFork::run(
+            [
+                function () {
+                    usleep(1_000_000);
+
+                    return 'finished_a';
+                },
+                function () {
+                    usleep(1_000_000);
+
+                    return 'finished_b';
+                },
+            ],
+            shouldContinue: $shouldContinue,
+        );
+
+        $this->assertCount(2, $results);
+        $this->assertSame('success', $results[0]['status'], 'Task 0 finished inside the grace period and must keep its result');
+        $this->assertSame('finished_a', $results[0]['result']);
+        $this->assertSame('success', $results[1]['status'], 'Task 1 finished inside the grace period and must keep its result');
+        $this->assertSame('finished_b', $results[1]['result']);
+    }
+
+    /**
      * Test that shouldContinue=null (default) behaves the same as before —
      * all tasks complete normally with blocking wait.
      */
