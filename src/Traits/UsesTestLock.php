@@ -66,6 +66,14 @@ trait UsesTestLock
      *
      * Every subsequent class is a no-op — the lock is already held and must not be
      * dropped between classes. See the class docblock.
+     *
+     * The lock is recorded as held only AFTER `acquireLock()` returns. It throws when its
+     * wait budget runs out. If it were marked held before that, every later class in the
+     * process would skip locking and run with no lock at all. RefreshDatabase would then
+     * re-migrate the shared database under the runner that really does hold the lock
+     * (SG-623: that runner failed with "relation does not exist" and deadlock errors).
+     * Now the class that timed out still fails loudly, and each later class tries again
+     * for real.
      */
     public static function setUpBeforeClass(): void
     {
@@ -75,9 +83,11 @@ trait UsesTestLock
             return;
         }
 
+        $testLockService = new TestLockService(static::testLockKeyPrefix());
+        $testLockService->acquireLock();
+
+        self::$testLockService  = $testLockService;
         self::$testLockAcquired = true;
-        self::$testLockService  = new TestLockService(static::testLockKeyPrefix());
-        self::$testLockService->acquireLock();
 
         register_shutdown_function(static fn() => self::releaseTestLock());
     }
