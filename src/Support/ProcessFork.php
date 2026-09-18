@@ -466,18 +466,32 @@ class ProcessFork
     /**
      * Execute a task inside the child process and write the result to a temp file.
      *
-     * Installs SIGTERM handler for clean shutdown. Reconnects DB before running the task.
-     * When audit params are provided, creates a child AuditRequest so all logs, API logs,
-     * and errors in this child are isolated from the parent and other children.
-     * Serializes the result (or error) to a temp file for the parent to read.
+     * Reconnects DB before running the task. When audit params are provided, creates a child
+     * AuditRequest so all logs, API logs, and errors in this child are isolated from the
+     * parent and other children. Serializes the result (or error) to a temp file for the
+     * parent to read.
+     *
+     * SIGTERM is held (blocked) from just after the handler is installed until the result is
+     * on disk. A cancellation SIGTERM that arrives while the task is running therefore never
+     * interrupts it part-way — e.g. mid database write — and throws away work that was about
+     * to finish. The held signal is delivered the moment it is unblocked, after the result is
+     * written, and the handler then exits cleanly. A task still running when the parent's
+     * `danx.process_fork.sigterm_grace_seconds` runs out is stopped by the SIGKILL that
+     * reapKilledChildren() sends, which cannot be blocked, so cancellation stays bounded.
+     *
+     * SG-623: without the hold, under CPU load a child that had finished its page could be
+     * terminated inside its own cache write and reported as Cancelled, losing completed work
+     * (ClassificationExecutorServiceRealForkTest reported 16-17 of 18 fast pages).
      */
     protected static function executeInChild(callable $task, string $tempFile, ?int $parentAuditRequestId = null, ?string $auditLabel = null): void
     {
-        // Install signal handler for clean shutdown (same as Heartbeat)
+        // Clean-shutdown handler (same as Heartbeat). It only runs once SIGTERM is unblocked
+        // below, after the result has been written.
         pcntl_signal(SIGTERM, function () {
             exit(0);
         });
         pcntl_async_signals(true);
+        pcntl_sigprocmask(SIG_BLOCK, [SIGTERM]);
 
         // Fresh DB, Redis, and Filesystem/S3 connections for this child (forked
         // processes must not share sockets with the parent — causes corruption)
@@ -524,6 +538,9 @@ class ProcessFork
 
         // Write serialized result to temp file — exit non-zero on failure so parent detects it
         $written = file_put_contents($tempFile, serialize($data));
+
+        pcntl_sigprocmask(SIG_UNBLOCK, [SIGTERM]);
+
         if ($written === false) {
             exit(1);
         }
