@@ -32,12 +32,35 @@ abstract class ModelSavedEvent implements ShouldBroadcast
     public const EVENT_DELETED = 'deleted';
 
     /**
-     * Tracks which model instances have already broadcasted a 'created' event.
-     * Keyed by model class and ID to prevent setting attributes on the model.
+     * Tracks which model INSTANCES have already broadcast a 'created' event, so that saving the
+     * same freshly-created instance twice within one request does not announce it as new twice.
      *
-     * @var array<string, bool>
+     * **Keyed on the instance via a WeakMap, deliberately — not on class and id.** The
+     * suppression this implements is per-instance ("this object has already been announced"),
+     * and a `class:id` key cannot express that: it answers yes for a DIFFERENT object that
+     * happens to carry the same id, so a genuine INSERT gets announced as an `updated`. That is
+     * not hypothetical. It is what made a gpt-manager test fail only inside large sweeps, where
+     * ids repeat within one long-lived PHPUnit process — and the old plain static array survived
+     * everything `RefreshDatabase` resets, because that rolls back the database and rebuilds the
+     * container but does not touch class statics.
+     *
+     * The WeakMap also removes a lifetime problem rather than relocating it: an entry vanishes
+     * when the model keying it is garbage collected, so nothing accumulates in a long-lived
+     * worker and there is no reset hook anyone has to remember to wire up. The array it replaces
+     * had no clear of any kind — it only ever grew.
+     *
+     * Re-loading the same row as a new object is unaffected either way: that instance's
+     * `wasRecentlyCreated` is false, so it never reaches this check at all.
+     *
+     * @var \WeakMap<Model, true>|null
      */
-    protected static array $broadcastedCreateCache = [];
+    protected static ?\WeakMap $broadcastedCreateCache = null;
+
+    /** Lazily built, because a WeakMap cannot be a static property's default value. */
+    protected static function broadcastedCreateCache(): \WeakMap
+    {
+        return static::$broadcastedCreateCache ??= new \WeakMap();
+    }
 
     /**
      * Max seconds to wait for lock acquisition during deduplication.
@@ -246,9 +269,7 @@ abstract class ModelSavedEvent implements ShouldBroadcast
      */
     protected static function hasBroadcastedCreate(Model $model): bool
     {
-        $key = get_class($model) . ':' . $model->getKey();
-
-        return static::$broadcastedCreateCache[$key] ?? false;
+        return static::broadcastedCreateCache()->offsetExists($model);
     }
 
     /**
@@ -259,8 +280,7 @@ abstract class ModelSavedEvent implements ShouldBroadcast
      */
     public static function markCreatedBroadcast(Model $model): void
     {
-        $key = get_class($model) . ':' . $model->getKey();
-        static::$broadcastedCreateCache[$key] = true;
+        static::broadcastedCreateCache()[$model] = true;
     }
 
     /**
