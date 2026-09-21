@@ -117,6 +117,25 @@ abstract class ActionController extends Controller
 	}
 
 	/**
+	 * SG-780: `{id}/apply-action` hands this whatever `ActionRepository::instance()` found for
+	 * the route-bound id, which is `null` for an id that does not exist (or exists but is
+	 * soft-deleted and the caller did not pass `?withTrashed=1`). Every subclass's own
+	 * `applyAction()` — and the typed handler methods it calls — is written assuming a real
+	 * model, so passing `null` through used to reach PHP's own type check (a non-nullable typed
+	 * parameter) or an untyped null-method-call error first, before the application ever decided
+	 * anything. Either shape is a raw PHP error — class name, method name, argument position,
+	 * file path — riding straight out through this method's own generic `catch(Throwable)` as an
+	 * uninformative 400. This guard answers in plain language instead, before any of that runs.
+	 *
+	 * `'create'` is the one action that legitimately runs with `$model === null` — it makes a
+	 * new record rather than acting on an existing one, via the resource-level `apply-action`
+	 * route (no `{id}` segment; see {@see \Newms87\Danx\Http\Routes\ActionRoute::routes()}) — so
+	 * it is excluded from this guard and falls through to the normal path unchanged.
+	 *
+	 * Originally a per-controller override on gpt-manager's own `TeamObjectsController` (SG-778);
+	 * moved here once SG-780 confirmed every OTHER `ActionController` subclass shared the same
+	 * unguarded seam, so the decision is now made in exactly one place for the whole app.
+	 *
 	 * @param Model|null   $model
 	 * @param PagerRequest $request
 	 * @return Response
@@ -126,6 +145,10 @@ abstract class ActionController extends Controller
 		$input  = $request->input();
 		$action = $input['action'] ?? $request->get('action');
 		$data   = $input['data'] ?? $request->get('data', []);
+
+		if (!$model && $action !== 'create') {
+			return response(['error' => true, 'message' => 'That record no longer exists.'], 404);
+		}
 
 		try {
 			$result = $this->repo()->applyAction($action, $model, $data);
