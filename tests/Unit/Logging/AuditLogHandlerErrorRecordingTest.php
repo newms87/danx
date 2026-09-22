@@ -272,15 +272,51 @@ class AuditLogHandlerErrorRecordingTest extends TestCase
             $this->logger->error($second);
         }
 
-        // Then - one row per pair, seen twice, keeping the first message verbatim
+        // Then - one row per pair, seen twice. SG-809: the displayed message now reflects
+        // the SECOND (latest) occurrence, not frozen on the first — see
+        // test_a_grouped_entrys_message_reflects_the_latest_occurrence_not_the_first() for
+        // the dedicated regression test of that half of the fix.
         $this->assertEquals(count($pairs), ErrorLog::count());
 
-        foreach(array_values($pairs) as $index => [$first]) {
+        foreach(array_values($pairs) as $index => [, $second]) {
             $errorLog = ErrorLog::orderBy('id')->skip($index)->first();
-            $this->assertEquals(substr($first, 0, ErrorLog::MAX_MESSAGE_SIZE), $errorLog->message);
+            $this->assertEquals(substr($second, 0, ErrorLog::MAX_MESSAGE_SIZE), $errorLog->message);
             $this->assertEquals(2, (int)$errorLog->count, $errorLog->message);
             $this->assertEquals(2, ErrorLogEntry::where('error_log_id', $errorLog->id)->count());
         }
+    }
+
+    public function test_messages_sharing_a_prefix_but_differing_after_the_first_colon_no_longer_collapse(): void
+    {
+        // Given - two genuinely different occurrences sharing the exact text up to the first
+        // colon (SG-809's real production shape: LockHelper's
+        // "🔴🔒 RELEASE-BY-OWNER-FAILED: <key>"). The old grouping key was only the text up to
+        // the first colon, which discarded everything after it — the ONLY part that told
+        // these two apart — and merged them into one row. Measured in production: one such
+        // row had merged 186 distinct real keys, spanning two unrelated task-worker workflows
+        // and an unrelated schema-definition publish job, under a single hash.
+        $this->logger->error('🔴🔒 RELEASE-BY-OWNER-FAILED: task-worker:workflow-56:6aab5eb99f3431.60360670 — not held by the given owner (expired and re-acquired by someone else, or never held)');
+        $this->logger->error('🔴🔒 RELEASE-BY-OWNER-FAILED: recompute-publish-content-hash:App\Models\Schema\SchemaDefinition:135 — not held by the given owner (expired and re-acquired by someone else, or never held)');
+
+        // Then - two distinct entries, not one merged row silently absorbing an unrelated key
+        $this->assertEquals(2, ErrorLog::count());
+    }
+
+    public function test_a_grouped_entrys_message_reflects_the_latest_occurrence_not_the_first(): void
+    {
+        // Given - two occurrences that legitimately group (they differ only in a normalized
+        // quoted value), logged in order
+        $this->logger->error("[ArrayIdentityProcessor] Extracted Professional 'Edgar' belongs to none of the parent records this extraction offered, so it is persisted with no parent and flagged.");
+        $this->logger->error("[ArrayIdentityProcessor] Extracted Professional 'Dr. Jane O'Brien' belongs to none of the parent records this extraction offered, so it is persisted with no parent and flagged.");
+
+        // Then - one row, but SG-809: its displayed message is the SECOND (latest)
+        // occurrence, not frozen on whichever happened first. Every individual occurrence is
+        // still preserved in full on its own ErrorLogEntry regardless.
+        $errorLog = ErrorLog::sole();
+        $this->assertEquals(2, (int)$errorLog->count);
+        $this->assertStringContainsString('Dr. Jane', $errorLog->message);
+        $this->assertStringNotContainsString("'Edgar'", $errorLog->message);
+        $this->assertEquals(2, ErrorLogEntry::where('error_log_id', $errorLog->id)->count());
     }
 
     public function test_a_failed_api_attempt_logs_a_warning_and_records_no_error(): void

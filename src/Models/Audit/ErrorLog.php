@@ -248,6 +248,18 @@ class ErrorLog extends Model
 	 * @param array    $data
 	 * @param bool     $isRetryable
 	 * @return ErrorLog|null
+	 *
+	 * SG-809: on a hash match, `message` used to stay whatever the FIRST occurrence ever
+	 * recorded under that hash happened to be — `count` and `last_seen_at` moved forward,
+	 * the displayed text never did. A grouped entry can have real variety among its
+	 * occurrences (see generateHash()'s docblock — grouping by normalized shape still lets
+	 * genuinely different keys/records share one row on purpose), so a reader was shown one
+	 * arbitrary, increasingly stale sample as if it were the whole story. That is what
+	 * produced a false bug report off a message that had not been true in days. `message` is
+	 * now overwritten on every occurrence, so it always reflects the MOST RECENT real
+	 * occurrence — actionable for "is this still happening" — while every individual
+	 * occurrence's own full text is separately and permanently preserved on its own
+	 * ErrorLogEntry regardless (see addEntry()).
 	 */
 	public static function log(ErrorLog $errorLog, string $message, array $data = [], bool $isRetryable = false): ?ErrorLog
 	{
@@ -257,8 +269,13 @@ class ErrorLog extends Model
 			$existingErrorLog = ErrorLog::where('hash', $errorLog->hash)->first();
 
 			if ($existingErrorLog) {
+				// Keep the incoming occurrence's own message (already MAX_MESSAGE_SIZE-capped
+				// by the caller) before $errorLog is replaced by the existing row below.
+				$latestMessage = $errorLog->message;
+
 				$errorLog = $existingErrorLog;
 				$errorLog->count++;
+				$errorLog->message = $latestMessage;
 			} else {
 				$errorLog->count = 1;
 			}
@@ -300,16 +317,32 @@ class ErrorLog extends Model
 	 * incremented and an entry added.
 	 *
 	 * An exception is identified by its stack trace. A message has no trace, so it is
-	 * identified by its text up to the first colon — after normalizeMessageForGrouping() has
-	 * replaced its ids, names and numbers, so the same message about two different records is
-	 * one ErrorLog, not one per record.
+	 * identified by its FULL text, after normalizeMessageForGrouping() has replaced every id,
+	 * name and number with a placeholder — so the same message-shape about two different
+	 * records is one ErrorLog, not one per record, while two messages that genuinely differ in
+	 * wording (including anything after the first colon) stay apart.
+	 *
+	 * SG-809: this used to key on only the text BEFORE the first colon
+	 * (`explode(':', ...)[0]`), on the assumption that a colon always separates a fixed label
+	 * from the variable part a record-level message appends after it. That assumption is false
+	 * for the equally common shape "LABEL: <the entire distinguishing part>" — there the colon
+	 * sits between the label and everything that makes one occurrence different from another,
+	 * so truncating at it discarded the one thing worth grouping BY and merged unrelated
+	 * occurrences together. Measured: one such row (lock-release failures logged as
+	 * "RELEASE-BY-OWNER-FAILED: <key>") had merged 186 distinct real keys — spanning two
+	 * unrelated task-worker workflows and an unrelated schema-definition publish job — under a
+	 * single hash, and (see log() below) its displayed message stayed frozen on whichever of
+	 * those unrelated keys happened to merge in first. Keying on the full normalized message
+	 * instead fixes this without losing the original de-duplication this method exists for:
+	 * two occurrences whose only difference is an id/uuid/number/quoted value still normalize
+	 * to the identical string and still merge into one row.
 	 */
 	public function generateHash(): string
 	{
 		if ($this->stack_trace) {
 			$id = json_encode($this->stack_trace);
 		} else {
-			$id = explode(':', static::normalizeMessageForGrouping($this->message))[0];
+			$id = static::normalizeMessageForGrouping($this->message);
 		}
 
 		return md5(base64_encode("$this->error_class:::$this->level:::$this->code:::$this->file:::$this->line:::$id"));
