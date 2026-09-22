@@ -36,6 +36,47 @@ class FixedRefTestJob extends Job
 }
 
 /**
+ * A Job with a fixed ref that ALSO opts out of the debounce/handoff lock entirely (SG-814's
+ * Job::debouncesDispatch() === false) — the shape of a job whose ref() is unique per dispatch
+ * by design (e.g. App\Jobs\TaskWorkerJob), simulated here with a fixed ref so the test can
+ * force a genuine lock collision and confirm it is correctly ignored.
+ *
+ * Deliberately extends Job directly rather than FixedRefTestJob: Job::__unserialize() mangles
+ * a PRIVATE property's serialized key via get_class($this) (the runtime class) rather than the
+ * property's declaring class, so a subclass of FixedRefTestJob loses its inherited $fixedRef on
+ * the queue's real serialize/unserialize round-trip. That is a separate, pre-existing bug in
+ * the unmangling logic, not something this card's fix causes or needs to touch — this test
+ * double sidesteps it by declaring $fixedRef itself instead of inheriting it.
+ */
+class NonDebouncingFixedRefTestJob extends Job
+{
+    public function __construct(private readonly string $fixedRef)
+    {
+        parent::__construct();
+    }
+
+    public function ref(): string
+    {
+        return $this->fixedRef;
+    }
+
+    public function run(): void
+    {
+        // no-op — these tests are about the dispatch/execute debounce lock, not job work.
+    }
+
+    protected function requiresAuth(): bool
+    {
+        return false;
+    }
+
+    protected function debouncesDispatch(): bool
+    {
+        return false;
+    }
+}
+
+/**
  * Job::dispatch() takes a short-lived debounce lock on the job's ref so a burst of redundant
  * dispatch requests collapses to one Pending JobDispatch row; Job::executeJob() releases that
  * SAME lock the moment the job actually starts running, so a later, genuinely new dispatch of
@@ -61,7 +102,7 @@ class FixedRefTestJob extends Job
  */
 class JobDispatchLockHandoffTest extends TestCase
 {
-    protected function setUp(): void
+    public function setUp(): void
     {
         parent::setUp();
 
@@ -120,5 +161,62 @@ class JobDispatchLockHandoffTest extends TestCase
             $dispatch->status,
             'a ref genuinely still held by another dispatch must still be debounced — this fix must not weaken that guarantee',
         );
+    }
+
+    /**
+     * SG-814: TaskWorkerJob's ref() is a uniqid()-suffixed token by design, specifically so
+     * concurrent workers are never folded together — which means it can never collide with
+     * anything, ever. Before this fix, Job::dispatch() still unconditionally took the
+     * debounce lock anyway, which bought zero protection (nobody else could ever compute the
+     * same ref) and cost a guaranteed RELEASE-BY-OWNER-FAILED once queue latency outran the
+     * lock's fixed 30s TTL — measured at 100/110 (91%) on a real local-dev run. This test
+     * proves the opt-out actually skips the lock, using a FORCED collision (a ref pre-locked
+     * by a simulated in-flight dispatch, exactly like the sibling collision test above) that a
+     * debouncing job would correctly abort on — a non-debouncing job must run anyway, because
+     * it must never even check.
+     */
+    public function test_a_job_that_opts_out_of_debouncing_ignores_a_ref_even_when_another_dispatch_already_holds_its_lock(): void
+    {
+        $ref = 'job-no-debounce-collision-test-' . uniqid('', true);
+
+        $owner = LockHelper::tryAcquireForHandoff($ref, 30);
+        $this->assertNotNull($owner, 'the simulated in-flight dispatch must have taken the lock cleanly');
+
+        (new NonDebouncingFixedRefTestJob($ref))->dispatch();
+
+        $dispatch = JobDispatch::where('ref', $ref)->orderByDesc('id')->first();
+        $this->assertNotNull($dispatch);
+        $this->assertNotSame(
+            JobDispatch::STATUS_ABORTED,
+            $dispatch->status,
+            'a job that opts out of debouncing must run regardless of another dispatch holding the same ref\'s debounce lock',
+        );
+    }
+
+    /**
+     * The direct mechanism check: debouncesDispatch() === false must mean dispatch() never
+     * even calls LockHelper::tryAcquireForHandoff() — not merely that the call happens to
+     * succeed. $dispatchLockOwner staying null is exactly what makes executeJob() skip the
+     * release attempt too (see its own `if ($this->dispatchLockOwner !== null)` guard), which
+     * is what eliminates the RELEASE-BY-OWNER-FAILED noise at the source rather than masking it.
+     */
+    public function test_a_job_that_opts_out_of_debouncing_never_acquires_the_handoff_lock(): void
+    {
+        $ref = 'job-no-debounce-mechanism-test-' . uniqid('', true);
+
+        $job = new NonDebouncingFixedRefTestJob($ref);
+        $job->dispatch();
+
+        $property = new \ReflectionProperty(Job::class, 'dispatchLockOwner');
+        $property->setAccessible(true);
+
+        $this->assertNull(
+            $property->getValue($job),
+            'a non-debouncing job must never populate dispatchLockOwner — dispatch() must skip tryAcquireForHandoff() entirely',
+        );
+
+        $dispatch = JobDispatch::where('ref', $ref)->orderByDesc('id')->first();
+        $this->assertNotNull($dispatch);
+        $this->assertSame(JobDispatch::STATUS_COMPLETE, $dispatch->status);
     }
 }

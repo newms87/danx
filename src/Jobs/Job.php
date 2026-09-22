@@ -47,6 +47,38 @@ abstract class Job implements ShouldQueue
     protected ?string $dispatchLockOwner = null;
 
     /**
+     * Whether this job's dispatch() takes the ref-based debounce/handoff lock at all (the
+     * lock {@see $dispatchLockOwner} tracks). Default true: most jobs' {@see ref()} names a
+     * real, REUSABLE resource (e.g. "task-orchestrator:344"), so two dispatches racing for
+     * that same resource genuinely need the lock to fold/serialise correctly.
+     *
+     * Override to false for a job whose ref() is unique PER DISPATCH — deliberately carries
+     * a uniqid()/microtime()-style token specifically so concurrent dispatches are never
+     * folded together (see {@see \App\Jobs\TaskWorkerJob::ref()} in the consuming gpt-manager
+     * app for the canonical example). For such a job the debounce lock can never structurally
+     * see a real collision: nobody else could ever compute the same ref, so nobody could ever
+     * be genuinely waiting on it. Acquiring it anyway buys nothing and costs a GUARANTEED
+     * RELEASE-BY-OWNER-FAILED the moment real queue latency (the time between dispatch()
+     * enqueuing the message and a worker actually reaching executeJob()) exceeds the lock's
+     * fixed TTL — which a queue-depth burst routinely does, since the TTL is fixed at 30s
+     * while queue wait time is unbounded.
+     *
+     * Measured (gpt-manager SG-814, local dev, workflow-61): TaskWorkerJob's per-dispatch
+     * debounce lock failed to release 100/110 times (91%) because ran_at trailed created_at
+     * by a median of 404s, far past the 30s TTL — while 0 of 1433 historical TaskWorkerJob
+     * dispatches ever actually needed debouncing (0 Aborted, 0 rows folded to count>1, 0
+     * duplicate refs — impossible by construction once the ref carries a uniqid()). The lock
+     * that actually serialises overlapping WORK on that path is a completely separate,
+     * same-process resource lock (LockHelper::acquire()/release() on the WorkflowRun /
+     * TaskOrchestrator / TaskWorker models themselves) — untouched by this flag, and verified
+     * to balance ACQUIRED/RELEASED perfectly across the same run.
+     */
+    protected function debouncesDispatch(): bool
+    {
+        return true;
+    }
+
+    /**
      * Whoever was authenticated in THIS process before __unserialize() logged in as this job's
      * own user/team — captured there, consumed by restoreCallerAuthContext() (SG-494).
      *
@@ -222,13 +254,20 @@ abstract class Job implements ShouldQueue
             // A cross-process handoff (this process acquires; the queue worker that later executes the job
             // releases) — never same-process get()/release(), which only LOOKS like it works because the two
             // sides share no memory to check ownership against.
-            $this->dispatchLockOwner = LockHelper::tryAcquireForHandoff($this->jobDispatch->ref, 30);
+            //
+            // Skipped entirely when debouncesDispatch() is false — see that method's docblock
+            // (gpt-manager SG-814): a job whose ref() can never collide gets zero protective
+            // value from this lock and only a guaranteed eventual RELEASE-BY-OWNER-FAILED once
+            // queue latency outruns the lock's fixed TTL.
+            if ($this->debouncesDispatch()) {
+                $this->dispatchLockOwner = LockHelper::tryAcquireForHandoff($this->jobDispatch->ref, 30);
 
-            if ($this->dispatchLockOwner === null) {
-                static::logDebug("Job {$this->jobDispatch->ref} is already running");
-                $this->jobDispatch->update(['status' => JobDispatch::STATUS_ABORTED]);
+                if ($this->dispatchLockOwner === null) {
+                    static::logDebug("Job {$this->jobDispatch->ref} is already running");
+                    $this->jobDispatch->update(['status' => JobDispatch::STATUS_ABORTED]);
 
-                return $this;
+                    return $this;
+                }
             }
 
             $this->send($now);
