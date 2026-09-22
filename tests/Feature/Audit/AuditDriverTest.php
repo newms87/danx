@@ -81,4 +81,26 @@ class AuditDriverTest extends TestCase
         // Then - parent should have two children via the relationship
         $this->assertEquals(2, $parent->children()->count());
     }
+
+    /**
+     * SG-859 — the crash this guards against: ProcessFork captures $parentAuditRequestId in the
+     * parent process before forking; if the row it names is deleted (a workspace clean, a team
+     * purge, a test transaction rollback — anything) before the forked child reaches this INSERT,
+     * writing that dead id into `parent_id` violates `audit_request_parent_id_foreign` and the
+     * whole child audit request fails to create. auditRequestExists() is checked first so a dead
+     * parent degrades to no parent instead of crashing.
+     */
+    public function test_create_child_audit_request_with_a_nonexistent_parent_id_does_not_crash(): void
+    {
+        // Given - a parent id that does not, and never did, exist in this test's transaction
+        $deadParentId = 999999999;
+        $this->assertDatabaseMissing('audit_request', ['id' => $deadParentId]);
+
+        // When
+        $child = AuditDriver::createChildAuditRequest($deadParentId, 'ProcessFork:orphaned');
+
+        // Then - the child is still created, just without the dead parent link
+        $this->assertNotNull($child, 'a dead parent id must not prevent the child from being created');
+        $this->assertNull($child->parent_id, 'a dead parent id must not be written to parent_id');
+    }
 }

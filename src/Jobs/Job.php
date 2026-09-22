@@ -420,11 +420,24 @@ abstract class Job implements ShouldQueue
         AuditDriver::$auditRequest = $this->jobDispatch?->runningAuditRequest ?? AuditDriver::getAuditRequest();
 
         // Associate the Job dispatch to the running audit request, and set parent_id
-        // to the dispatcher's audit request for direct hierarchy traversal
+        // to the dispatcher's audit request for direct hierarchy traversal — but only when
+        // that dispatcher's audit request row still exists (SG-859). dispatch_audit_request_id
+        // is captured back at dispatch time (see dispatch()/queue() below) and carries no
+        // foreign key of its own, so it survives silently if the row it names is deleted any
+        // time between dispatch and this job actually running — a workspace clean, a team
+        // purge, a test's RefreshDatabase rollback. parent_id IS foreign-key enforced
+        // (audit_request_parent_id_foreign); writing a dead id into it is exactly the
+        // two-hops-later crash this guard exists to prevent. See
+        // AuditDriver::auditRequestExists() for why the check lives at this one call site (and
+        // AuditDriver::createChildAuditRequest(), the only other parent_id writer) instead of
+        // on every getAuditRequest() read.
         if (AuditDriver::$auditRequest) {
             $this->jobDispatch?->update(['running_audit_request_id' => AuditDriver::$auditRequest->id]);
 
-            if ($this->jobDispatch?->dispatch_audit_request_id && !AuditDriver::$auditRequest->parent_id) {
+            if ($this->jobDispatch?->dispatch_audit_request_id
+                && !AuditDriver::$auditRequest->parent_id
+                && AuditDriver::auditRequestExists($this->jobDispatch->dispatch_audit_request_id)
+            ) {
                 AuditDriver::$auditRequest->update(['parent_id' => $this->jobDispatch->dispatch_audit_request_id]);
             }
         }
