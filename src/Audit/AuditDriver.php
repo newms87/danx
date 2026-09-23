@@ -2,7 +2,9 @@
 
 namespace Newms87\Danx\Audit;
 
+use Closure;
 use Exception;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Response;
@@ -61,11 +63,10 @@ class AuditDriver implements AuditDriverContract
 	 *   changes nothing about what the test does, it only adds a parentheses pair every one of
 	 *   those ~40+ call sites, in every consuming repo, would have to grow.
 	 *
-	 * What actually needed fixing was never "who can assign this" — it is that {@see
-	 * getAuditRequest()} handed back whatever was here without checking the row it names still
-	 * exists. That is fixed at the two places a dangling value can turn into a crash; see {@see
-	 * auditRequestExists()}'s docblock for the full reasoning and the measured cost of checking
-	 * on every read instead.
+	 * What actually needed fixing was never "who can assign this" — it is that deleting the row
+	 * this names left the value behind. Every delete of `audit_request` rows now goes through
+	 * {@see deleteAuditRequests()}, which releases this when its row is gone; see {@see
+	 * auditRequestExists()} for the measured cost of checking on every read instead.
 	 */
 	public static ?AuditRequest $auditRequest = null;
 
@@ -274,17 +275,55 @@ class AuditDriver implements AuditDriverContract
 	}
 
 	/**
+	 * THE way to delete `audit_request` rows. Deletes every row $scope selects, then releases
+	 * {@see $auditRequest} if the row it names is gone.
+	 *
+	 * ## Why every deleter must come through here (SG-858)
+	 *
+	 * The database handles everything that points AT an audit request: `audits`, `api_logs` and
+	 * `error_log_entry` rows are cascade-deleted with it, and `job_dispatch`'s two audit request
+	 * columns and a child's `parent_id` are nulled (migration
+	 * `0019_danx_audit_request_foreign_keys`). The one reference the database cannot reach is
+	 * this process's own memory: {@see $auditRequest} is a process-lifetime static, and after a
+	 * delete it would still name the deleted row. With the foreign keys in place, the next audit
+	 * write in this process would then fail.
+	 *
+	 * So the check runs once, after the delete, rather than on every read of the static (see
+	 * {@see auditRequestExists()} for what a per-read check would cost). It looks the row up
+	 * rather than asking whether $scope selected it, so the answer stays right even if the
+	 * database's delete policy later removes rows $scope did not name.
+	 *
+	 * A test in the consuming application fails if any code deletes `audit_request` rows by any
+	 * other route.
+	 *
+	 * @param Closure(Builder): Builder $scope narrows `AuditRequest::query()` to the rows to delete
+	 * @return int the number of `audit_request` rows deleted
+	 */
+	public static function deleteAuditRequests(Closure $scope): int
+	{
+		$deleted = $scope(AuditRequest::query())->delete();
+
+		if (self::$auditRequest && !self::auditRequestExists(self::$auditRequest->id)) {
+			self::releaseAuditRequest();
+		}
+
+		return $deleted;
+	}
+
+	/**
 	 * Create a child audit request parented to the given audit request ID.
 	 * Used by ProcessFork to give each forked child its own isolated audit context.
 	 *
 	 * Sets AuditDriver::$auditRequest to the new child, so all subsequent logs,
 	 * API logs, and errors in this process are attributed to the child.
 	 *
-	 * $parentId is checked with {@see auditRequestExists()} before being written — see that
-	 * method's docblock for why (SG-859). The caller (ProcessFork) captured $parentId before
-	 * forking; if the row it names is gone by the time this INSERT runs, writing it anyway
-	 * violates audit_request's one enforced foreign key (`audit_request_parent_id_foreign`)
-	 * and the whole child creation fails instead of degrading to a parentless audit request.
+	 * $parentId is checked with {@see auditRequestExists()} before being written (SG-859), and
+	 * this is the one place that check is still needed. The caller (ProcessFork) captured
+	 * $parentId in the PARENT process before forking, so it is a plain integer in this child's
+	 * memory: the database cannot null it and {@see deleteAuditRequests()} running in another
+	 * process cannot release it. If the row it names is gone by the time this INSERT runs,
+	 * writing it anyway violates `audit_request_parent_id_foreign` and the whole child creation
+	 * fails, instead of degrading to a parentless audit request.
 	 */
 	public static function createChildAuditRequest(int $parentId, string $url): ?AuditRequest
 	{
@@ -317,21 +356,21 @@ class AuditDriver implements AuditDriverContract
 	/**
 	 * Whether an `audit_request` row with this id currently exists.
 	 *
-	 * ## Why this check exists, and why it lives HERE and not in {@see getAuditRequest()} (SG-859)
+	 * ## Where it is used, and why it is NOT in {@see getAuditRequest()} (SG-859, SG-858)
 	 *
-	 * {@see $auditRequest} is a process-lifetime static, and nothing that deletes an
-	 * `audit_request` row — a raw `DB::table('audit_request')->delete()` (workspace cleanup, a
-	 * team purge's residue sweep), a `TRUNCATE`, an Eloquent `forceDelete()`, or a test
-	 * transaction rollback — notifies the static that the row it may still be pointing at is
-	 * gone. That dangling id is harmless almost everywhere it is read: `job_dispatch`'s
-	 * `dispatch_audit_request_id` / `running_audit_request_id` and `audits.audit_request_id`
-	 * all carry an `audit_request` id with NO foreign key, so they accept a dead one silently.
+	 * Two callers, each checking an id the database cannot keep current for it:
 	 *
-	 * `audit_request.parent_id` is the ONE exception — it IS foreign-key enforced
-	 * (`audit_request_parent_id_foreign`) — and exactly two call sites ever write to it:
-	 * this method, and {@see \Newms87\Danx\Jobs\Job::__unserialize()}. Both now check here
-	 * first. That is the full extent of where a dangling id can turn into a crash, so that is
-	 * the full extent of where the check is needed.
+	 * - {@see deleteAuditRequests()} — after a delete, whether {@see $auditRequest} still names a
+	 *   live row. Once per delete call.
+	 * - {@see createChildAuditRequest()} — whether the parent id a forked child was handed, as a
+	 *   plain integer across the fork, still exists. Once per forked child.
+	 *
+	 * Every stored reference is the database's job (migration
+	 * `0019_danx_audit_request_foreign_keys` cascades or nulls each one), so no read of a stored
+	 * id needs this check. {@see \Newms87\Danx\Jobs\Job::__unserialize()} used to, before
+	 * copying `job_dispatch.dispatch_audit_request_id` into a `parent_id`; it reads that column
+	 * from a row it has just loaded, and the key now nulls it the moment its audit request is
+	 * deleted.
 	 *
 	 * It is deliberately NOT added to {@see getAuditRequest()}'s read path. That path is called
 	 * on every audit log line ({@see \Newms87\Danx\Logging\Audit\AuditLogHandler}), every
@@ -339,7 +378,7 @@ class AuditDriver implements AuditDriverContract
 	 * single hottest path in the whole audited-write surface. Once `self::$auditRequest` is set,
 	 * every one of those calls today costs zero queries; adding an existence check there would
 	 * add one query to EVERY one of them, for the rest of the process, to guard against a hazard
-	 * that can only ever materialize at the two call sites above.
+	 * that {@see deleteAuditRequests()} already clears at the only moment it can arise.
 	 *
 	 * Measured (SG-859), not assumed: `AuditRequest::whereKey()->exists()` against a warm
 	 * Postgres connection in this repo's Sail container costs ~0.24ms/call (500-call average),
@@ -350,9 +389,9 @@ class AuditDriver implements AuditDriverContract
 	 * `AuditLogHandler`, averaging ~28 per audit_request and reaching 120,070 on the single
 	 * busiest observed row (an `ArrayIdentityResolution` ProcessFork batch). Adding the check to
 	 * `getAuditRequest()` would have added roughly 120,070 × 0.24ms ≈ 29 seconds of pure query
-	 * latency to that ONE fork's audit trail alone. Checking only at the two parent_id write
-	 * sites instead costs the same ~0.24ms at most ONCE per job dispatch and ONCE per forked
-	 * child — negligible where `getAuditRequest()`'s cost is not.
+	 * latency to that ONE fork's audit trail alone. Checking only at the two callers above costs
+	 * the same ~0.24ms once per delete and once per forked child — negligible where
+	 * `getAuditRequest()`'s cost is not.
 	 */
 	public static function auditRequestExists(int $id): bool
 	{
