@@ -43,9 +43,19 @@ class StoredFileResource extends ActionResource
     }
 
     /**
-     * Get the thumb for a stored file.
+     * Get the thumb for a stored file, as a real record ({@see ActionResource::typedData()} —
+     * `__type` + `id`), in the same shape any other StoredFileResource::make() call produces.
      *
      * NOTE: Only applicable to PDF files for now
+     *
+     * Deliberately calls static::make($thumb) with NO $includeFields: per
+     * ActionResource::make(), a field backed by a closure (this class's own `thumb`,
+     * `optimized`, and `children`) is only included when explicitly named. A PDF page's
+     * thumb IS the page itself (`$thumb === $storedFile` in the `original_stored_file_id`
+     * branch above), so recursing into ITS thumb/optimized would call getThumb() on the
+     * same row again — infinite recursion. Omitting $includeFields entirely, rather than
+     * passing `['thumb' => false, 'optimized' => false]`, keeps this correct even if a
+     * future closure field is added here without this method being touched.
      */
     public static function getThumb(?StoredFile $storedFile): ?array
     {
@@ -67,12 +77,6 @@ class StoredFileResource extends ActionResource
             return null;
         }
 
-        return [
-            'id'       => $thumb->id,
-            'url'      => $thumb->url,
-            'name'     => $thumb->filename,
-            'mime'     => $thumb->mime,
-            'size'     => $thumb->size,
-        ];
+        return static::make($thumb);
     }
 }
