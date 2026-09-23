@@ -156,6 +156,19 @@ abstract class ActionController extends Controller
 			if (!$model && ($result instanceof Model)) {
 				$model  = $result;
 				$result = true;
+			} elseif ($result instanceof Model) {
+				// SG-918: a repo action that already had a bound $model (every action reached
+				// via {id}/apply-action) but answers with a Model of its own — its own bound
+				// $model back unchanged, or some other row entirely — must not leave that model
+				// on the wire raw. `.claude/rules/record-store.md`: every database row this app
+				// answers with carries `__type`/`id` through its own ActionResource, never a bare
+				// Eloquent instance. `static::$resource::make()` resolves through the resource's
+				// plain `data()` method with no relation selector — never `details()`'s own
+				// recursive preload — so this can never trip the same-instance relation-hydration
+				// cycle `TeamObjectResource::details()` guards against for $model itself (see
+				// that method's own docblock): `$result` is resource-ified as a flat snapshot,
+				// and `item` below is still built from `$model->refresh()` exactly as before.
+				$result = static::$resource::make($result);
 			}
 
 			return response([
