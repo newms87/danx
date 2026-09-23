@@ -23,8 +23,29 @@ abstract class ActionResource
             'id'           => $model->getKey(),
             '__type'       => $type,
             '__timestamp'  => $model->updated_at?->getPreciseTimestamp(3) ?: microtime(true),
-            '__deleted_at' => $model->deleted_at,
+            '__deleted_at' => static::recordDeletedAtFor($model),
         ] + $responseData;
+    }
+
+    /**
+     * What a client-side record store should treat this model's deletion as.
+     *
+     * A soft-deleted row is not always a "this record is gone" tombstone — a consuming app may
+     * soft-delete for a reason the record store must not act on (e.g. "superseded, but still
+     * meant to be shown", or "flagged wrong, but still meant to be shown and un-flaggable").
+     * Deciding that per-resource, with a resource-level `typedData()` override, does not scale:
+     * a tombstone applies per store key (one per model+id), so two resources serializing the
+     * SAME model can disagree, and whichever response lands last silently wins.
+     *
+     * So the decision belongs on the MODEL, once — this method asks the model itself via an
+     * optional `recordDeletedAt(): ?DateTimeInterface` method, falling back to the model's own
+     * `deleted_at` when it declares none. A model opts in by adding that one method; every
+     * resource serializing it (today's callers and any future one) then gets the same answer
+     * for free, and two resources for the same model can no longer disagree.
+     */
+    protected static function recordDeletedAtFor(Model $model)
+    {
+        return method_exists($model, 'recordDeletedAt') ? $model->recordDeletedAt() : $model->deleted_at;
     }
 
     public static function make(?Model $model = null, array $includeFields = []): ?array
