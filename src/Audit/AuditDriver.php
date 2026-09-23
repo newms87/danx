@@ -33,6 +33,40 @@ class AuditDriver implements AuditDriverContract
 	const string SESSION_COOKIE     = 'session-uuid';
 	const string FINGERPRINT_COOKIE = 'fingerprint';
 
+	/**
+	 * The current process's "audit request" — every debug log line, ApiLog/ErrorLog row and
+	 * audited model write attributes itself to whichever {@see AuditRequest} lives here.
+	 *
+	 * ## Why this stays PUBLIC (SG-858)
+	 *
+	 * A getter/setter pair would add no safety: PHP has no way to make a static property
+	 * write-restricted to "this class and nothing else" without breaking the exact usage this
+	 * property exists for. It is a deliberate, load-bearing seam — not an oversight — read and
+	 * assigned directly, outside this class, by:
+	 *
+	 * - {@see \Newms87\Danx\Jobs\Job} — reattaches it at every queued-job boundary so a job's
+	 *   audit trail survives serialization across the queue.
+	 * - {@see \Newms87\Danx\Support\ProcessFork} — a forked child clears it so it never
+	 *   inherits the parent's audit request by accident.
+	 * - {@see \Newms87\Danx\Support\Heartbeat} and {@see \Newms87\Danx\Support\SignalHandler} —
+	 *   read it directly to attribute a heartbeat/signal event to the request that is currently
+	 *   running when neither owns that request's lifecycle.
+	 * - {@see \Newms87\Danx\Console\Commands\TestHeartbeatCommand} — drives it directly to
+	 *   simulate a running request/child/heartbeat sequence for manual verification.
+	 * - Every consuming application's test suite. Verified 2026-09-22: 30 direct assignments
+	 *   across 15 test files in gpt-manager alone (`AuditDriver::$auditRequest = null` to reset
+	 *   between tests, or `= $auditRequest` to seed a known one), plus 11 more across danx's own
+	 *   src/tests. A test fabricating "the request currently running" needs synchronous,
+	 *   unmediated control over exactly this value in `setUp()`/`tearDown()` — a setter method
+	 *   changes nothing about what the test does, it only adds a parentheses pair every one of
+	 *   those ~40+ call sites, in every consuming repo, would have to grow.
+	 *
+	 * What actually needed fixing was never "who can assign this" — it is that {@see
+	 * getAuditRequest()} handed back whatever was here without checking the row it names still
+	 * exists. That is fixed at the two places a dangling value can turn into a crash; see {@see
+	 * auditRequestExists()}'s docblock for the full reasoning and the measured cost of checking
+	 * on every read instead.
+	 */
 	public static ?AuditRequest $auditRequest = null;
 
 	public static float $startTime = 0;
