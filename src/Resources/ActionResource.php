@@ -2,8 +2,10 @@
 
 namespace Newms87\Danx\Resources;
 
+use DateTimeInterface;
 use Exception;
 use Illuminate\Database\Eloquent\Model;
+use Newms87\Danx\Contracts\HasRecordDeletedAt;
 
 abstract class ActionResource
 {
@@ -37,15 +39,19 @@ abstract class ActionResource
      * a tombstone applies per store key (one per model+id), so two resources serializing the
      * SAME model can disagree, and whichever response lands last silently wins.
      *
-     * So the decision belongs on the MODEL, once — this method asks the model itself via an
-     * optional `recordDeletedAt(): ?DateTimeInterface` method, falling back to the model's own
-     * `deleted_at` when it declares none. A model opts in by adding that one method; every
-     * resource serializing it (today's callers and any future one) then gets the same answer
-     * for free, and two resources for the same model can no longer disagree.
+     * So the decision belongs on the MODEL, once — a model opts in by implementing
+     * {@see HasRecordDeletedAt}, checked with `instanceof` (a declared contract, not a
+     * `method_exists()` name-match) rather than falling back to the model's own `deleted_at`
+     * when it declares none. Every resource serializing that model (today's callers and any
+     * future one) then gets the same answer for free, and two resources for the same model can
+     * no longer disagree. `private` (not `final` — PHP warns that `final` is meaningless on an
+     * already-non-virtual private method) — this is the ONE call site the contract is read
+     * from; a private method resolves non-virtually regardless of subclass, so this can never
+     * be silently shadowed by a subclass override the way a `protected` one could.
      */
-    protected static function recordDeletedAtFor(Model $model)
+    private static function recordDeletedAtFor(Model $model): ?DateTimeInterface
     {
-        return method_exists($model, 'recordDeletedAt') ? $model->recordDeletedAt() : $model->deleted_at;
+        return $model instanceof HasRecordDeletedAt ? $model->recordDeletedAt() : $model->deleted_at;
     }
 
     public static function make(?Model $model = null, array $includeFields = []): ?array
