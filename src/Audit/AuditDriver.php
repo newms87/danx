@@ -280,9 +280,9 @@ class AuditDriver implements AuditDriverContract
 	 *
 	 * ## Why every deleter must come through here (SG-858)
 	 *
-	 * The database handles everything that points AT an audit request: `audits`, `api_logs` and
-	 * `error_log_entry` rows are cascade-deleted with it, and `job_dispatch`'s two audit request
-	 * columns and a child's `parent_id` are nulled (migration
+	 * The database handles everything that points AT an audit request: `audits`, `api_logs`,
+	 * `error_log_entry` rows and child audit requests are cascade-deleted with it, and
+	 * `job_dispatch`'s two audit request columns are nulled (migration
 	 * `0019_danx_audit_request_foreign_keys`). The one reference the database cannot reach is
 	 * this process's own memory: {@see $auditRequest} is a process-lifetime static, and after a
 	 * delete it would still name the deleted row. With the foreign keys in place, the next audit
@@ -290,8 +290,14 @@ class AuditDriver implements AuditDriverContract
 	 *
 	 * So the check runs once, after the delete, rather than on every read of the static (see
 	 * {@see auditRequestExists()} for what a per-read check would cost). It looks the row up
-	 * rather than asking whether $scope selected it, so the answer stays right even if the
-	 * database's delete policy later removes rows $scope did not name.
+	 * rather than asking whether $scope selected it, because the cascade also removes rows $scope
+	 * did not name: every child audit request of a deleted one.
+	 *
+	 * This reaches only THIS process. Another process whose current audit request is deleted
+	 * under it has its next audit write rejected, so callers must not delete audit requests that
+	 * running work is still using: a queue job and a web request each release theirs at their
+	 * own start, and a caller deleting the trail of work that may still be running must first
+	 * refuse while it is.
 	 *
 	 * A test in the consuming application fails if any code deletes `audit_request` rows by any
 	 * other route.
